@@ -1,0 +1,134 @@
+openapi: 3.0.0
+info:
+  title: Train Travel API
+  version: 1.0.0
+  description: API for managing train stations and departures
+
+paths:
+  /stations:
+    get:
+      tags: 
+        - stations
+      operationId: list_stations
+      description: List all stations
+      responses:
+        '200':
+          description: List of stations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Station'
+                  links:
+                    $ref: '#/components/schemas/Links'
+
+  /stations/{station_id}/departures:
+    get:
+      tags:
+        - departures
+      operationId: list_departures
+      description: List departures from a station
+      parameters:
+        - name: station_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of departures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Departure'
+
+components:
+  schemas:
+    Station:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        location:
+          $ref: '#/components/schemas/Location'
+        status:
+          type: string
+          enum: [active, inactive, maintenance]
+      required:
+        - id
+        - name
+        - code
+        - location
+        - status
+
+    Location:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: float
+        longitude:
+          type: number
+          format: float
+      required:
+        - latitude
+        - longitude
+
+    Departure:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        train_number:
+          type: string
+        destination:
+          $ref: '#/components/schemas/Station'
+        scheduled_time:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [on_time, delayed, cancelled]
+        platform:
+          type: string
+        delay_minutes:
+          type: integer
+          minimum: 0
+      required:
+        - id
+        - train_number
+        - destination
+        - scheduled_time
+        - status
+        - platform
+
+    Links:
+      type: object
+      properties:
+        self:
+          type: string
+          format: uri
+        next:
+          type: string
+          format: uri
+        prev:
+          type: string
+          format: uri
+      required:
+        - self 
