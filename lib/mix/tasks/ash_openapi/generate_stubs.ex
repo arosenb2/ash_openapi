@@ -82,21 +82,22 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     router_path = Path.join(["lib", "#{Macro.underscore(prefix)}_web", "router.ex"])
     router_module = Module.concat([:"#{prefix}Web", "Router"])
 
-    content = Code.format_string!("""
-    defmodule #{router_module} do
-      use #{prefix}Web, :router
+    content =
+      Code.format_string!("""
+      defmodule #{router_module} do
+        use #{prefix}Web, :router
 
-      pipeline :api do
-        plug :accepts, ["json"]
+        pipeline :api do
+          plug :accepts, ["json"]
+        end
+
+        scope "/api", #{prefix}Web do
+          pipe_through :api
+
+          #{routes}
+        end
       end
-
-      scope "/api", #{prefix}Web do
-        pipe_through :api
-
-        #{routes}
-      end
-    end
-    """)
+      """)
 
     Igniter.Project.Module.find_and_update_or_create_module(
       igniter,
