@@ -21,6 +21,15 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   * `--prefix` or `-p` - Module prefix for generated resources (defaults to app name)
   """
 
+  @doc """
+  Provides information about the mix task, including dependencies, options, and aliases.
+
+  This callback is required by `Igniter.Mix.Task` and configures:
+  - Task group: :ash_openapi
+  - Dependencies: jason, yaml_elixir, open_api_spex
+  - Required options: output_dir
+  - Optional options: prefix (defaults to app name)
+  """
   def info(_argv, _composing_task) do
     %Igniter.Mix.Task.Info{
       group: :ash_openapi,
@@ -46,6 +55,15 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     }
   end
 
+  @doc """
+  Executes the mix task to generate Ash resources from OpenAPI schemas.
+
+  This callback is required by `Igniter.Mix.Task` and:
+  - Parses and validates the OpenAPI specification file
+  - Creates the output directory
+  - Extracts schemas from the specification
+  - Generates Ash resources for each schema
+  """
   def igniter(igniter, argv) do
     {[openapi_file], argv} = positional_args!(argv)
     options = options!(argv)
@@ -74,6 +92,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     end
   end
 
+  @doc """
+  Extracts all schemas from an OpenAPI specification.
+  """
   def extract_schemas(%{"components" => %{"schemas" => schemas}} = spec) do
     schemas
     |> Enum.map(fn {name, schema} ->
@@ -84,6 +105,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     |> Enum.reduce(%{}, &Map.merge/2)
   end
 
+  @doc """
+  Extracts nested object schemas from a parent schema's properties.
+  """
   def extract_nested_schemas(%{"properties" => properties}, spec) do
     properties
     |> Enum.flat_map(fn {field_name, schema} ->
@@ -108,6 +132,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     |> Map.new()
   end
 
+  @doc """
+  Generates an Ash resource module from an OpenAPI schema definition.
+  """
   def generate_ash_resource(name, schema, app_prefix) do
     title = schema["title"] || name
     description = schema["description"] || "Schema for #{name}"
@@ -161,6 +188,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     |> IO.iodata_to_binary()
   end
 
+  @doc """
+  Generates an attribute definition for an Ash resource.
+  """
   def generate_attribute({name, schema}, parent_name, required?, app_prefix) do
     case schema do
       %{"type" => "object"} = object_schema ->
@@ -231,18 +261,27 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     end
   end
 
+  @doc """
+  Generates an attribute definition for an Ash resource without a module prefix.
+  """
   def generate_attribute(property, parent_name, is_required) do
     generate_attribute(property, parent_name, is_required, nil)
   end
 
-  defp has_relationships?(properties) do
+  @doc """
+  Determines if a schema has any relationships based on its properties.
+  """
+  def has_relationships?(properties) do
     Enum.any?(properties, fn {_name, prop} ->
       Map.has_key?(prop, "$ref") ||
         (prop["type"] == "array" && Map.has_key?(prop["items"], "$ref"))
     end)
   end
 
-  defp generate_relationships(properties, app_prefix) do
+  @doc """
+  Generates the relationships block for an Ash resource.
+  """
+  def generate_relationships(properties, app_prefix) do
     relationships =
       properties
       |> Enum.filter(fn {_name, prop} ->
@@ -267,6 +306,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     """
   end
 
+  @doc """
+  Maps an OpenAPI type to its corresponding Ash type.
+  """
   def map_type(%{"type" => "string", "format" => "date-time"}, _parent_name, _name),
     do: {:utc_datetime, []}
 
@@ -352,6 +394,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     {qualified_name, [resource_def]}
   end
 
+  @doc """
+  Generates enum modules for all enum properties in a schema.
+  """
   def generate_enums(%{"properties" => properties}, prefix) do
     properties
     |> Enum.filter(fn {_, schema} ->
@@ -365,6 +410,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
   def generate_enums(_, _), do: ""
 
+  @doc """
+  Generates a single enum type module.
+  """
   def generate_enum_type(name, schema, _prefix) do
     enum_name = "#{Macro.camelize(name)}Type"
     values = schema["enum"]
@@ -379,6 +427,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     """
   end
 
+  @doc """
+  Generates attribute definitions for all properties in a schema.
+  """
   def generate_attributes(properties, parent_name, required \\ []) do
     properties
     |> Enum.map(fn {name, schema} ->
@@ -387,6 +438,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     end)
   end
 
+  @doc """
+  Formats constraint options for an attribute.
+  """
   def generate_constraints([]), do: ""
 
   def generate_constraints(constraints) do
@@ -398,6 +452,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     ", #{constraints_string}"
   end
 
+  @doc """
+  Creates an embedded type module for a nested object schema.
+  """
   def generate_embedded_type(schema, parent_name, property_name) do
     name = derive_embedded_name(parent_name, property_name)
     content = generate_ash_resource(name, schema, "")
@@ -405,6 +462,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     mod
   end
 
+  @doc """
+  Derives a module name for an embedded type.
+  """
   def derive_embedded_name(parent_name, field_name) do
     # Convert field name to PascalCase
     field_part =
@@ -420,15 +480,23 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     end
   end
 
+  @doc """
+  Gets the application module prefix from the Mix project configuration.
+  """
   def app_module_prefix, do: AshOpenapi.Spec.app_module_prefix()
 
+  @doc """
+  Extracts the type name from a JSON Schema reference.
+  """
   def derive_type_from_ref(ref) when is_binary(ref) do
     ref
     |> String.split("/")
     |> List.last()
   end
 
-  # Helper to derive enum module name
+  @doc """
+  Derives an enum module name based on parent context.
+  """
   def derive_enum_name(parent_name, field_name) do
     field_part = Macro.camelize(field_name)
 
