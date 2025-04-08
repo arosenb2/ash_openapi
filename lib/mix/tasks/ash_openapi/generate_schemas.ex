@@ -65,8 +65,8 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   - Generates Ash resources for each schema
   """
   def igniter(igniter, argv) do
-    {[openapi_file], argv} = positional_args!(argv)
-    options = options!(argv)
+    {arguments, options} = Igniter.Mix.Task.parse_args!(argv, info(argv, nil))
+    openapi_file = Keyword.fetch!(arguments, :openapi_file)
 
     with {:ok, spec} <- AshOpenapi.Spec.parse_spec_file(openapi_file),
          :ok <- AshOpenapi.Spec.validate_openapi_version(spec) do

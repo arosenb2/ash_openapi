@@ -48,31 +48,32 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
   end
 
   def igniter(igniter, argv) do
-    {[openapi_file], argv} = positional_args!(argv)
-    options = options!(argv)
+    {arguments, options} = Igniter.Mix.Task.parse_args!(argv, info(argv, nil))
+    openapi_file = Keyword.fetch!(arguments, :openapi_file)
 
     # Set up options for both tasks
-    schema_options = Keyword.put(options, :output_dir, Path.join(options.output_dir, "schemas"))
+    schema_options = Map.put(options, :output_dir, Path.join(options.output_dir, "schemas"))
+    operation_options = Map.put(options, :output_dir, Path.join(options.output_dir, "operations"))
 
-    operation_options =
-      Keyword.put(options, :output_dir, Path.join(options.output_dir, "operations"))
+    # Create new argument lists for sub-tasks
+    schema_args = [
+      openapi_file,
+      "--output-dir",
+      schema_options.output_dir,
+      "--prefix",
+      options.prefix
+    ]
 
-    with {:ok, igniter} <-
-           Mix.Tasks.AshOpenapi.GenerateSchemas.igniter(igniter, [
-             openapi_file,
-             "--output-dir",
-             schema_options.output_dir,
-             "--prefix",
-             options.prefix
-           ]),
-         {:ok, igniter} <-
-           Mix.Tasks.AshOpenapi.GenerateStubs.igniter(igniter, [
-             openapi_file,
-             "--output-dir",
-             operation_options.output_dir,
-             "--prefix",
-             options.prefix
-           ]) do
+    operation_args = [
+      openapi_file,
+      "--output-dir",
+      operation_options.output_dir,
+      "--prefix",
+      options.prefix
+    ]
+
+    with {:ok, igniter} <- Mix.Tasks.AshOpenapi.GenerateSchemas.igniter(igniter, schema_args),
+         {:ok, igniter} <- Mix.Tasks.AshOpenapi.GenerateStubs.igniter(igniter, operation_args) do
       {:ok, igniter}
     else
       error -> error
