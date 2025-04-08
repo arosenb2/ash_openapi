@@ -36,14 +36,16 @@ defmodule AshOpenapi.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:ash, "~> 3.0"},
-      {:igniter, "~> 0.4.1"},
-      {:rewrite, "~> 0.10.5"},
-      {:jason, "~> 1.2"},
-      {:yaml_elixir, "~> 2.9"},
-      {:open_api_spex, "~> 3.18"},
-      {:xml_builder, "~> 2.2", optional: true},
-      {:ex_doc, "~> 0.29", only: :dev, runtime: false}
+      {:ash, ">= 3.0.0 and < 4.0.0"},
+      {:igniter, ">= 0.4.8 and < 1.0.0-0", override: true},
+      {:rewrite, ">= 1.1.1 and < 2.0.0-0", override: true},
+      {:splode, ">= 0.2.6 and < 1.0.0-0", override: true},
+      {:reactor, "~> 0.11", override: true},
+      {:jason, ">= 1.2.0 and < 3.0.0"},
+      {:yaml_elixir, ">= 2.9.0 and < 4.0.0"},
+      {:open_api_spex, ">= 3.18.0 and < 4.0.0"},
+      {:xml_builder, ">= 2.2.0 and < 4.0.0", optional: true},
+      {:ex_doc, ">= 0.29.0 and < 2.0.0", only: :dev, runtime: false}
     ]
   end
 
