@@ -65,8 +65,8 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   - Generates Ash resources for each schema
   """
   def igniter(igniter, argv) do
-    {[openapi_file], argv} = positional_args!(argv)
-    options = options!(argv)
+    {%{openapi_file: openapi_file}, remaining_argv} = positional_args!(argv)
+    options = options!(remaining_argv)
 
     with {:ok, spec} <- AshOpenapi.Spec.parse_spec_file(openapi_file),
          :ok <- AshOpenapi.Spec.validate_openapi_version(spec) do

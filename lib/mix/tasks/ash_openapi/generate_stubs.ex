@@ -65,8 +65,8 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   - Configures router and controllers based on the operations
   """
   def igniter(igniter, argv) do
-    {[openapi_file], argv} = positional_args!(argv)
-    options = options!(argv)
+    {%{openapi_file: openapi_file}, remaining_argv} = positional_args!(argv)
+    options = options!(remaining_argv)
 
     case AshOpenapi.Spec.parse_spec_file(openapi_file) do
       {:ok, spec} ->
