@@ -636,4 +636,140 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemasTest do
                Enum.any?(Map.keys(nested_schemas), &String.ends_with?(&1, "Location"))
     end
   end
+
+  describe "extract_nested_schemas/2" do
+    test "extracts nested schemas from array items" do
+      spec = %{
+        "type" => "array",
+        "items" => %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "code" => %{"type" => "string"}
+          }
+        }
+      }
+
+      nested_schemas = GenerateSchemas.extract_nested_schemas(spec, %{})
+      assert map_size(nested_schemas) == 1
+      assert Map.has_key?(nested_schemas, "Item") || Map.has_key?(nested_schemas, "ArrayItem")
+    end
+
+    test "extracts nested schemas from allOf" do
+      spec = %{
+        "allOf" => [
+          %{
+            "type" => "object",
+            "properties" => %{
+              "name" => %{"type" => "string"}
+            }
+          },
+          %{
+            "type" => "object",
+            "properties" => %{
+              "location" => %{
+                "type" => "object",
+                "properties" => %{
+                  "latitude" => %{"type" => "number"},
+                  "longitude" => %{"type" => "number"}
+                }
+              }
+            }
+          }
+        ]
+      }
+
+      nested_schemas = GenerateSchemas.extract_nested_schemas(spec, %{})
+      assert map_size(nested_schemas) == 1
+      assert Map.has_key?(nested_schemas, "Location")
+    end
+
+    test "extracts nested schemas from oneOf" do
+      spec = %{
+        "oneOf" => [
+          %{
+            "type" => "object",
+            "properties" => %{
+              "name" => %{"type" => "string"}
+            }
+          },
+          %{
+            "type" => "object",
+            "properties" => %{
+              "address" => %{
+                "type" => "object",
+                "properties" => %{
+                  "street" => %{"type" => "string"},
+                  "city" => %{"type" => "string"}
+                }
+              }
+            }
+          }
+        ]
+      }
+
+      nested_schemas = GenerateSchemas.extract_nested_schemas(spec, %{})
+      assert map_size(nested_schemas) == 1
+      assert Map.has_key?(nested_schemas, "Address")
+    end
+
+    test "extracts nested schemas from complex combinations" do
+      spec = %{
+        "type" => "object",
+        "properties" => %{
+          "mainLocation" => %{
+            "type" => "object",
+            "properties" => %{
+              "coordinates" => %{
+                "type" => "object",
+                "properties" => %{
+                  "latitude" => %{"type" => "number"},
+                  "longitude" => %{"type" => "number"}
+                }
+              }
+            }
+          },
+          "alternateLocations" => %{
+            "type" => "array",
+            "items" => %{
+              "type" => "object",
+              "properties" => %{
+                "name" => %{"type" => "string"},
+                "coordinates" => %{
+                  "type" => "object",
+                  "properties" => %{
+                    "latitude" => %{"type" => "number"},
+                    "longitude" => %{"type" => "number"}
+                  }
+                }
+              }
+            }
+          },
+          "status" => %{
+            "oneOf" => [
+              %{
+                "type" => "object",
+                "properties" => %{
+                  "details" => %{
+                    "type" => "object",
+                    "properties" => %{
+                      "code" => %{"type" => "string"},
+                      "message" => %{"type" => "string"}
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+
+      nested_schemas = GenerateSchemas.extract_nested_schemas(spec, %{})
+      assert map_size(nested_schemas) == 5
+      assert Map.has_key?(nested_schemas, "MainLocation")
+      assert Map.has_key?(nested_schemas, "Coordinates")
+      assert Map.has_key?(nested_schemas, "AlternateLocation")
+      assert Map.has_key?(nested_schemas, "Details")
+    end
+  end
 end

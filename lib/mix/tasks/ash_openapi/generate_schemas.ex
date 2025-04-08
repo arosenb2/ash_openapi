@@ -65,8 +65,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   - Generates Ash resources for each schema
   """
   def igniter(igniter, argv) do
-    {%{openapi_file: openapi_file}, remaining_argv} = positional_args!(argv)
-    options = options!(remaining_argv)
+    {args, remaining} = positional_args!(argv)
+    openapi_file = args[:openapi_file]
+    options = Map.new(options!(remaining))
 
     with {:ok, spec} <- AshOpenapi.Spec.parse_spec_file(openapi_file),
          :ok <- AshOpenapi.Spec.validate_openapi_version(spec) do
@@ -108,28 +109,63 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   @doc """
   Extracts nested object schemas from a parent schema's properties.
   """
-  def extract_nested_schemas(%{"properties" => properties}, spec) do
+  def extract_nested_schemas(%{"type" => "object", "properties" => properties}, spec) do
     properties
     |> Enum.flat_map(fn {field_name, schema} ->
       schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
-
-      case schema do
-        %{"type" => "object", "properties" => _} = nested_schema ->
-          nested_name = derive_embedded_name(nil, field_name)
-          [{nested_name, nested_schema}]
-
-        %{"type" => "array", "items" => %{"type" => "object"} = items} ->
-          extract_nested_schemas(items, spec)
-
-        %{"type" => "array", "items" => %{"allOf" => _} = items} ->
-          items = AshOpenapi.Spec.maybe_merge_all_of(items, spec)
-          extract_nested_schemas(items, spec)
-
-        _ ->
-          []
-      end
+      extract_nested_schema_from_field(field_name, schema, spec)
     end)
     |> Map.new()
+  end
+
+  def extract_nested_schemas(%{"type" => "array", "items" => items}, spec) do
+    items = AshOpenapi.Spec.maybe_merge_all_of(items, spec)
+    extract_nested_schemas(items, spec)
+  end
+
+  def extract_nested_schemas(%{"allOf" => schemas}, spec) do
+    schemas
+    |> Enum.flat_map(fn schema ->
+      schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
+      extract_nested_schemas(schema, spec)
+    end)
+    |> Enum.reduce(%{}, &Map.merge/2)
+  end
+
+  def extract_nested_schemas(%{"oneOf" => schemas}, spec) do
+    schemas
+    |> Enum.flat_map(fn schema ->
+      schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
+      extract_nested_schemas(schema, spec)
+    end)
+    |> Enum.reduce(%{}, &Map.merge/2)
+  end
+
+  def extract_nested_schemas(_, _spec), do: %{}
+
+  defp extract_nested_schema_from_field(field_name, schema, spec) do
+    case schema do
+      %{"type" => "object", "properties" => _} = nested_schema ->
+        nested_name = derive_embedded_name(nil, field_name)
+        [{nested_name, nested_schema}]
+
+      %{"type" => "array", "items" => items} ->
+        items = AshOpenapi.Spec.maybe_merge_all_of(items, spec)
+
+        extract_nested_schemas(items, spec)
+        |> Enum.to_list()
+
+      %{"allOf" => _} = schema ->
+        extract_nested_schemas(schema, spec)
+        |> Enum.to_list()
+
+      %{"oneOf" => _} = schema ->
+        extract_nested_schemas(schema, spec)
+        |> Enum.to_list()
+
+      _ ->
+        []
+    end
   end
 
   @doc """
