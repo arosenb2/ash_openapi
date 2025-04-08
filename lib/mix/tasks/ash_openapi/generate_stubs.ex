@@ -22,6 +22,15 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   * `--prefix` or `-p` - Module prefix for generated stubs (defaults to app name)
   """
 
+  @doc """
+  Provides information about the mix task, including dependencies, options, and aliases.
+
+  This callback is required by `Igniter.Mix.Task` and configures:
+  - Task group: :ash_openapi
+  - Dependencies: jason, yaml_elixir, xml_builder
+  - Required options: output_dir
+  - Optional options: prefix (defaults to app name)
+  """
   def info(_argv, _composing_task) do
     %Igniter.Mix.Task.Info{
       group: :ash_openapi,
@@ -47,6 +56,14 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     }
   end
 
+  @doc """
+  Executes the mix task to generate operation stubs from OpenAPI paths.
+
+  This callback is required by `Igniter.Mix.Task` and:
+  - Parses and validates the OpenAPI specification file
+  - Extracts operations from the specification
+  - Configures router and controllers based on the operations
+  """
   def igniter(igniter, argv) do
     # Parse arguments according to Igniter.Mix.Task documentation
     {arguments, argv} = positional_args!(argv)
@@ -76,6 +93,12 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
 
   @doc """
   Configures the router with routes from the OpenAPI spec.
+  Creates or updates the router module with proper route definitions.
+
+  ## Parameters
+    - igniter: The Igniter context
+    - operations: List of {path, method, operation} tuples
+    - prefix: Module prefix for the application
   """
   def configure_router(igniter, operations, prefix) do
     routes = format_routes(operations)
@@ -111,6 +134,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     )
   end
 
+  @doc """
+  Configures controllers for all operations, grouping them by controller name.
+  """
   def configure_controllers(igniter, operations, prefix, spec) do
     operations
     |> group_operations_by_controller()
@@ -120,7 +146,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   end
 
   @doc """
-  Groups operations by their controller name.
+  Groups operations by their controller name based on OpenAPI tags.
   """
   def group_operations_by_controller(operations) do
     Enum.group_by(operations, fn {_path, _method, operation} ->
@@ -129,7 +155,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   end
 
   @doc """
-  Creates or updates a single controller module.
+  Creates or updates a controller module with the generated operations.
   """
   def create_or_update_controller(igniter, controller_name, operations, prefix, spec) do
     content = generate_controller_module(controller_name, operations, prefix, spec)
@@ -153,7 +179,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   end
 
   @doc """
-  Generates the file path for a controller.
+  Generates the file path for a controller module.
   """
   def controller_file_path(prefix, controller_name) do
     Path.join([
@@ -165,12 +191,15 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
   end
 
   @doc """
-  Generates the module name for a controller.
+  Generates the fully qualified module name for a controller.
   """
   def controller_module_name(prefix, controller_name) do
     Module.concat([:"#{prefix}Web", "Controllers", controller_name])
   end
 
+  @doc """
+  Generates a controller module with all its operations and helper functions.
+  """
   def generate_controller_module(controller_name, operations, prefix, _spec) do
     actions =
       operations
@@ -224,6 +253,10 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     """
   end
 
+  @doc """
+  Configures operation modules grouped by their tags.
+  Creates or updates operation modules with proper callbacks and stubs.
+  """
   def configure_operations(igniter, operations, prefix, output_dir, spec) do
     # Group operations by their primary tag
     operations_by_tag =
@@ -269,6 +302,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end)
   end
 
+  @doc """
+  Extracts routes from an OpenAPI specification's paths.
+  """
   def generate_routes_from_spec(%{"paths" => paths}) do
     paths
     |> Enum.flat_map(fn {path, methods} ->
@@ -279,6 +315,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end)
   end
 
+  @doc """
+  Formats routes into Phoenix router syntax.
+  """
   def format_routes(routes) do
     routes
     |> Enum.map(fn {path, method, operation} ->
@@ -290,12 +329,20 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     |> Enum.join("\n      ")
   end
 
+  @doc """
+  Determines the controller name from an operation's tags.
+  Defaults to "DefaultController" if no tags are present.
+  """
   def get_controller_name(%{"tags" => [primary_tag | _]}) do
     "#{Macro.camelize(primary_tag)}Controller"
   end
 
   def get_controller_name(_operation), do: "DefaultController"
 
+  @doc """
+  Determines the action name from an operation.
+  Uses operationId if present, otherwise falls back to HTTP method conventions.
+  """
   def get_action_name(_method, %{"operationId" => operation_id}) do
     operation_id
     |> Macro.underscore()
@@ -312,13 +359,18 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end
   end
 
+  @doc """
+  Converts OpenAPI path parameters to Phoenix route parameters.
+  """
   def openapi_path_to_phoenix(path) do
     path
     |> String.replace(~r/{([^}]+)}/, ":\\1")
     |> String.replace_prefix("/", "")
   end
 
-  # New functions for operation extraction and stub generation
+  @doc """
+  Extracts operations from OpenAPI paths.
+  """
   def extract_operations(%{"paths" => paths}) do
     paths
     |> Enum.flat_map(fn {path, methods} ->
@@ -329,6 +381,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end)
   end
 
+  @doc """
+  Generates an operation stub module with proper callbacks and type specs.
+  """
   def generate_operation_stub(path, method, operation, prefix, spec) do
     module_name = operation_module_name(operation)
     request_schema = extract_request_schema(operation)
@@ -353,6 +408,10 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     """
   end
 
+  @doc """
+  Determines the module name for an operation.
+  Uses operationId, summary, or generates a unique name.
+  """
   def operation_module_name(%{"operationId" => operation_id}) do
     operation_id
     |> Macro.camelize()
@@ -368,12 +427,18 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     "Operation#{:erlang.unique_integer([:positive])}"
   end
 
+  @doc """
+  Generates the file name for an operation module.
+  """
   def operation_filename(operation) do
     operation
     |> operation_module_name()
     |> Macro.underscore()
   end
 
+  @doc """
+  Extracts the request schema from an operation's requestBody.
+  """
   def extract_request_schema(operation) do
     case operation do
       %{"requestBody" => %{"content" => %{"application/json" => %{"schema" => schema}}}} ->
@@ -384,6 +449,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end
   end
 
+  @doc """
+  Extracts and formats the response schema from an OpenAPI schema.
+  """
   def extract_response_schema(schema)
 
   def extract_response_schema(%{"$ref" => ref}) do
@@ -405,6 +473,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     "any"
   end
 
+  @doc """
+  Generates the request parameters type specification.
+  """
   def request_params(nil), do: "any()"
 
   def request_params(schema, spec) do
@@ -412,6 +483,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     AshOpenapi.TypeSpec.schema_to_type_spec(type, constraints)
   end
 
+  @doc """
+  Generates the response type specification.
+  """
   def response_type(nil), do: "any()"
 
   def response_type(schema, spec) do
@@ -420,9 +494,14 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     "{:ok, #{type_spec}} | {:error, term()}"
   end
 
+  @doc """
+  Gets the application module prefix from the Mix project configuration.
+  """
   def app_module_prefix, do: AshOpenapi.Spec.app_module_prefix()
 
-  # Add map_type from generate_schemas but modified for type specs
+  @doc """
+  Maps OpenAPI types to Elixir type specifications.
+  """
   def map_type(%{"oneOf" => schemas}, spec, parent_name, property_name) do
     types =
       schemas
@@ -487,7 +566,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end
   end
 
-  # Helper to derive the module name for a type
+  @doc """
+  Derives a module name for a type definition.
+  """
   def derive_type_module(%{"$ref" => ref}, _parent_name, _property_name) do
     name =
       ref
@@ -518,6 +599,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     Module.concat(["#{app_module_prefix()}.Schemas", name])
   end
 
+  @doc """
+  Extracts response definitions from an operation.
+  """
   def extract_responses(operation) do
     operation
     |> Map.get("responses", %{})
@@ -526,6 +610,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end)
   end
 
+  @doc """
+  Extracts supported content types from an operation's responses.
+  """
   def extract_content_types(operation) do
     operation
     |> Map.get("responses", %{})
@@ -541,6 +628,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     end
   end
 
+  @doc """
+  Generates pattern matching clauses for handling responses.
+  """
   def generate_response_matches(responses) do
     error_responses =
       Enum.filter(responses, fn {status, _, _} ->
@@ -629,6 +719,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     |> Enum.join("\n")
   end
 
+  @doc """
+  Generates content type specific response formatting.
+  """
   def generate_content_type_matches(content, status) do
     content
     |> Enum.map(fn {content_type, %{"schema" => schema}} ->
@@ -645,6 +738,9 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     |> Enum.join("\n")
   end
 
+  @doc """
+  Generates response formatting functions for different content types.
+  """
   def generate_format_response_functions(content_types) do
     content_types
     |> Enum.map(fn content_type ->
@@ -678,14 +774,23 @@ defmodule Mix.Tasks.AshOpenapi.GenerateStubs do
     |> Enum.join("\n\n")
   end
 
+  @doc """
+  Gets the URL helpers module for the application.
+  """
   def url_helpers do
     app_name = Mix.Project.config()[:app]
     Module.concat(["#{app_name}_web", "Router", "Helpers"])
   end
 
+  @doc """
+  Gets the primary tag from an operation or returns "default".
+  """
   def get_operation_tag(%{"tags" => [primary_tag | _]}), do: primary_tag
   def get_operation_tag(_), do: "default"
 
+  @doc """
+  Extracts all unique content types from a list of operations.
+  """
   def extract_content_types_from_operations(operations) do
     operations
     |> Enum.flat_map(fn {_, _, operation} -> extract_content_types(operation) end)
