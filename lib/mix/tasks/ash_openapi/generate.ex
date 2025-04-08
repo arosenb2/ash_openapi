@@ -48,8 +48,8 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
   end
 
   def igniter(igniter, argv) do
-    {arguments, options} = Igniter.Mix.Task.parse_args!(argv, info(argv, nil))
-    openapi_file = Keyword.fetch!(arguments, :openapi_file)
+    {[openapi_file], argv} = positional_args!(argv)
+    options = options!(argv)
 
     # Set up options for both tasks
     schema_options = Map.put(options, :output_dir, Path.join(options.output_dir, "schemas"))
