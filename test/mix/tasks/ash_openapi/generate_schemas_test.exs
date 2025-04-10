@@ -158,8 +158,8 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemasTest do
       {type_name, [resource_def]} =
         GenerateSchemas.map_type(schema, "Station", "platforms", "TestApp")
 
-      assert type_name == {:array, "TestApp.Resources.StationPlatform"}
-      assert resource_def =~ ~r/defmodule TestApp.Resources.StationPlatform do/
+      assert type_name == {:array, "TestApp.Resources.StationPlatforms"}
+      assert resource_def =~ ~r/defmodule TestApp.Resources.StationPlatforms do/
       assert resource_def =~ ~r/attribute :name, :string/
     end
 
@@ -302,12 +302,12 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemasTest do
 
   describe "derive_embedded_name/2" do
     test "derives name from field name" do
-      assert "Platform" = GenerateSchemas.derive_embedded_name(nil, "platforms")
+      assert "Platforms" = GenerateSchemas.derive_embedded_name(nil, "platforms")
       assert "Location" = GenerateSchemas.derive_embedded_name(nil, "location")
     end
 
     test "derives name with parent prefix" do
-      assert "StationPlatform" = GenerateSchemas.derive_embedded_name("Station", "platforms")
+      assert "StationPlatforms" = GenerateSchemas.derive_embedded_name("Station", "platforms")
       assert "StationLocation" = GenerateSchemas.derive_embedded_name("Station", "location")
     end
   end
@@ -768,8 +768,77 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemasTest do
       assert map_size(nested_schemas) == 5
       assert Map.has_key?(nested_schemas, "MainLocation")
       assert Map.has_key?(nested_schemas, "Coordinates")
-      assert Map.has_key?(nested_schemas, "AlternateLocation")
+      assert Map.has_key?(nested_schemas, "AlternateLocations")
       assert Map.has_key?(nested_schemas, "Details")
+      assert Map.has_key?(nested_schemas, "Status")
+    end
+  end
+
+  describe "escape_description/1" do
+    test "handles plain text" do
+      description = "This is a simple description with some punctuation: test!"
+      result = GenerateSchemas.escape_description(description)
+      assert result == description
+    end
+
+    test "handles text with quotes" do
+      description = ~s(This description has "quotes" in it)
+      result = GenerateSchemas.escape_description(description)
+      assert result == ~s(This description has \"quotes\" in it)
+    end
+
+    test "handles HTML content" do
+      description = "<p>This is <strong>HTML</strong> content</p>"
+      result = GenerateSchemas.escape_description(description)
+      assert result == "&lt;p&gt;This is &lt;strong&gt;HTML&lt;/strong&gt; content&lt;/p&gt;"
+    end
+
+    test "handles URLs in text" do
+      description = "Check out https://example.com/path/to/resource"
+      result = GenerateSchemas.escape_description(description)
+      assert result == "Check out https://example.com/path/to/resource"
+    end
+
+    test "handles URLs in HTML attributes" do
+      description = ~s(<a href="https://example.com/test">Link</a>)
+      result = GenerateSchemas.escape_description(description)
+      assert result == ~s(&lt;a href=\"https://example.com/test\"&gt;Link&lt;/a&gt;)
+    end
+
+    test "handles complex documentation with HTML, URLs and Markdown" do
+      description = """
+      The strategy used for managing sessions.
+
+      <strong><code>sessionStrategy</code></strong> strings may have these
+      [enumerated values](https://example.com/docs/enums):
+
+      <table>
+      <tr>
+        <th>Value</th><th>Description</th>
+      </tr>
+      <tr>
+        <td><strong><code>legacy</code></strong></td>
+        <td>Legacy: <p>Managed through legacy strategy</p></td>
+      </tr>
+      <tr>
+        <td><strong><code>modern</code></strong></td>
+        <td>Modern: <p>Managed through <a href="https://example.com/modern">modern strategy</a></p></td>
+      </tr>
+      </table>
+      """
+
+      result = GenerateSchemas.escape_description(description)
+
+      # Verify key aspects of the escaped content
+      assert result =~ ~r/&lt;strong&gt;&lt;code&gt;sessionStrategy&lt;\/code&gt;&lt;\/strong&gt;/
+      assert result =~ ~r/\[enumerated values\]\(https:\/\/example\.com\/docs\/enums\)/
+      assert result =~ ~r/href=\"https:\/\/example\.com\/modern\"/
+      assert result =~ ~r/&lt;table&gt;/
+      assert result =~ ~r/&lt;\/table&gt;/
+    end
+
+    test "handles nil description" do
+      assert GenerateSchemas.escape_description(nil) == nil
     end
   end
 end
