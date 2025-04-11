@@ -110,48 +110,12 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   Extracts nested object schemas from a parent schema's properties.
   """
   def extract_nested_schemas(%{"type" => "object", "properties" => properties}, spec) do
-    # First, get all directly nested schemas from properties
-    direct_schemas =
-      properties
-      |> Enum.flat_map(fn {field_name, schema} ->
-        schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
-        extract_nested_schema_from_field(field_name, schema, spec)
-      end)
-      |> Map.new()
-
-    # Then, recursively get nested schemas from each property's nested objects
-    nested_schemas =
-      properties
-      |> Enum.flat_map(fn {field_name, schema} ->
-        schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
-
-        case schema do
-          %{"type" => "object", "properties" => _} = object_schema ->
-            # Extract both the current object schema and its nested schemas
-            current_schema = extract_nested_schema_from_field(field_name, object_schema, spec)
-            nested_schema = Map.to_list(extract_nested_schemas(object_schema, spec))
-            current_schema ++ nested_schema
-
-          %{"type" => "array", "items" => %{"type" => "object"} = items} ->
-            # Extract both the array item schema and its nested schemas
-            item_name = derive_embedded_name(nil, field_name)
-            current_schema = [{item_name, items}]
-            nested_schema = Map.to_list(extract_nested_schemas(items, spec))
-            current_schema ++ nested_schema
-
-          _ ->
-            []
-        end
-      end)
-      |> Enum.reduce(%{}, fn {name, schema}, acc ->
-        # If we already have this schema name, merge their properties
-        case Map.get(acc, name) do
-          nil -> Map.put(acc, name, schema)
-          existing -> Map.put(acc, name, Map.merge(existing, schema))
-        end
-      end)
-
-    Map.merge(direct_schemas, nested_schemas)
+    properties
+    |> Enum.flat_map(fn {field_name, schema} ->
+      schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
+      extract_nested_schema_from_field(field_name, schema, spec)
+    end)
+    |> Map.new()
   end
 
   def extract_nested_schemas(%{"type" => "array", "items" => items}, spec) do
@@ -159,10 +123,8 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
     case items do
       %{"type" => "object", "properties" => _} = object_schema ->
-        # Extract both the array item schema and its nested schemas
-        direct_schemas = Map.new(extract_nested_schema_from_field("Item", object_schema, spec))
-        nested_schemas = extract_nested_schemas(object_schema, spec)
-        Map.merge(direct_schemas, nested_schemas)
+        nested_name = derive_embedded_name(nil, "Item")
+        Map.new([{nested_name, object_schema}])
 
       _ ->
         %{}
@@ -178,7 +140,6 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   end
 
   def extract_nested_schemas(%{"oneOf" => schemas}, spec) do
-    # Only extract nested schemas from each variant
     schemas
     |> Enum.reduce(%{}, fn schema, acc ->
       schema = AshOpenapi.Spec.maybe_merge_all_of(schema, spec)
@@ -212,15 +173,22 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
       %{"oneOf" => schemas} = schema ->
         # First get the schema itself as a type
-        nested_name = derive_embedded_name(nil, field_name)
-        current_schema = [{nested_name, schema}]
+        current_schema = [{derive_embedded_name(nil, field_name), schema}]
 
-        # Then get any nested schemas from within the oneOf variants
+        # Then get any nested schemas from the variants
         nested_schemas =
           schemas
           |> Enum.flat_map(fn variant ->
-            variant = AshOpenapi.Spec.maybe_merge_all_of(variant, spec)
-            Map.to_list(extract_nested_schemas(variant, spec))
+            case variant do
+              %{"type" => "object", "properties" => properties} ->
+                properties
+                |> Enum.flat_map(fn {name, prop_schema} ->
+                  extract_nested_schema_from_field(name, prop_schema, spec)
+                end)
+
+              _ ->
+                []
+            end
           end)
 
         current_schema ++ nested_schemas
@@ -235,7 +203,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   """
   def generate_ash_resource(name, schema, app_prefix) do
     title = schema["title"] || name
-    description = escape_description(schema["description"] || "Schema for #{name}")
+    description = schema["description"] || "Schema for #{name}"
     properties = schema["properties"] || %{}
     required = schema["required"] || []
 
@@ -251,7 +219,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
     content = """
     defmodule #{app_prefix}.Resources.#{name} do
-      @moduledoc \"\"\"
+      @moduledoc ~S\"\"\"
       #{title}
 
       #{description}
@@ -290,7 +258,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   Generates an attribute definition for an Ash resource.
   """
   def generate_attribute({name, schema}, parent_name, required?, app_prefix) do
-    description = escape_description(Map.get(schema, "description"))
+    description = Map.get(schema, "description")
 
     case schema do
       %{"type" => "object"} = object_schema ->
@@ -298,10 +266,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
         attr_def =
           "attribute :#{name}, #{type_name}" <>
-            case description do
-              nil -> ""
-              desc -> ", description: \"#{desc}\""
-            end <>
+            format_description(description) <>
             ", allow_nil?: #{!required?}, public?: true"
 
         {attr_def, resource_defs}
@@ -311,10 +276,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
         attr_def =
           "attribute :#{name}, #{enum_module}" <>
-            case description do
-              nil -> ""
-              desc -> ", description: \"#{desc}\""
-            end <>
+            format_description(description) <>
             ", allow_nil?: #{!required?}, public?: true"
 
         {attr_def, enum_defs}
@@ -324,10 +286,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
         attr_def =
           "attribute :#{name}, #{inspect(type_name)}" <>
-            case description do
-              nil -> ""
-              desc -> ", description: \"#{desc}\""
-            end <>
+            format_description(description) <>
             ", allow_nil?: #{!required?}, public?: true"
 
         {attr_def, type_defs}
@@ -337,10 +296,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
         attr_def =
           "attribute :#{name}, #{inspect(type_name)}" <>
-            case description do
-              nil -> ""
-              desc -> ", description: \"#{desc}\""
-            end <>
+            format_description(description) <>
             ", allow_nil?: #{!required?}, public?: true"
 
         {attr_def, type_defs}
@@ -351,10 +307,7 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
 
         attr_def =
           "attribute :#{name}, #{type_str}" <>
-            case description do
-              nil -> ""
-              desc -> ", description: \"#{desc}\""
-            end <>
+            format_description(description) <>
             ", allow_nil?: #{!required?}, public?: true"
 
         {attr_def, type_defs}
@@ -418,6 +371,20 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
   def map_type(%{"type" => "integer"}, _parent_name, _name), do: {:integer, []}
   def map_type(%{"type" => "number"}, _parent_name, _name), do: {:float, []}
   def map_type(%{"type" => "boolean"}, _parent_name, _name), do: {:boolean, []}
+
+  def map_type(%{"allOf" => schemas} = schema, parent_name, name) do
+    # For allOf, we typically want to merge all the schemas together
+    # The first schema (often a $ref) usually defines the base type
+    base_schema = List.first(schemas)
+    {type, defs} = map_type(base_schema, parent_name, name)
+
+    # If there's a description in the parent schema, we should use that
+    # but we need to return it as part of the type information, not the defs
+    case Map.get(schema, "description") do
+      nil -> {type, defs}
+      description -> {{:described, type, description}, defs}
+    end
+  end
 
   def map_type(%{"$ref" => ref}, _parent_name, _name) do
     {derive_type_from_ref(ref), []}
@@ -603,12 +570,6 @@ defmodule Mix.Tasks.AshOpenapi.GenerateSchemas do
     end
   end
 
-  def escape_description(nil), do: nil
-
-  def escape_description(description) when is_binary(description) do
-    description
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace(~s("), ~s(\"))
-  end
+  defp format_description(nil), do: ""
+  defp format_description(desc), do: ", description: ~S\"\"\"\n#{desc}\n\n\"\"\""
 end
