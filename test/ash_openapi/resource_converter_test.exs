@@ -225,5 +225,26 @@ defmodule AshOpenApi.ResourceConverterTest do
       assert blog_post_module =~
                "attribute :comments, {:array, AshOpenapi.Api.Responses.Comment}, public?: true"
     end
+
+    test "converts string enum to Ash.Type.Enum" do
+      schemas = %{
+        "Status" => %Schema{
+          type: :string,
+          enum: ["pending", "active", "completed"],
+          description: "The status of the item"
+        }
+      }
+
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "schemas")
+      assert map_size(result) == 1
+
+      status_module = result["AshOpenapi.Api.Schemas.Status"]
+
+      assert status_module =~
+               "use Ash.Type.Enum, values: [\"pending\", \"active\", \"completed\"]"
+
+      assert status_module =~ "@moduledoc"
+      assert status_module =~ "The status of the item"
+    end
   end
 end

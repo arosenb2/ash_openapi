@@ -25,10 +25,27 @@ defmodule AshOpenApi.ResourceConverter do
     schemas
     |> Enum.map(fn {name, schema} ->
       module_name = "#{Context.app_name()}.#{namespace}.#{Macro.camelize(component_type)}.#{name}"
-      content = generate_resource_module(name, schema, component_type)
+      content = generate_module(name, schema, component_type)
       {module_name, content}
     end)
     |> Map.new()
+  end
+
+  defp generate_module(name, %Schema{type: :string, enum: values} = schema, component_type)
+       when not is_nil(values) do
+    """
+    defmodule #{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name} do
+      @moduledoc \"\"\"
+      #{name}
+      #{schema.description || ""}
+      \"\"\"
+      use Ash.Type.Enum, values: #{inspect(values)}
+    end
+    """
+  end
+
+  defp generate_module(name, schema, component_type) do
+    generate_resource_module(name, schema, component_type)
   end
 
   defp generate_resource_module(
