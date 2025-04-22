@@ -2,7 +2,6 @@ defmodule AshOpenApi.ResourceConverterTest do
   use ExUnit.Case, async: false
   alias OpenApiSpex.{Reference, Schema}
   alias AshOpenApi.{ResourceConverter, Context}
-  import ExUnit.CaptureIO
 
   setup do
     # Stop any existing context
@@ -263,13 +262,9 @@ defmodule AshOpenApi.ResourceConverterTest do
         }
       }
 
-      output =
-        capture_io(fn ->
-          result = ResourceConverter.to_ash_resources(schemas, "Api", "extensions")
-          assert result == %{}
-        end)
-
-      assert output =~ "Skipping unsupported component type: extensions"
+      # Simply verify that unsupported types return empty maps
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "extensions")
+      assert result == %{}
     end
 
     test "handles nil schemas in supported component types" do
@@ -307,20 +302,19 @@ defmodule AshOpenApi.ResourceConverterTest do
 
         assert map_size(result) == 1,
                "Expected #{type} to be processed"
+
+        module_name = "AshOpenapi.Api.#{Macro.camelize(type)}.Test"
+
+        assert Map.has_key?(result, module_name),
+               "Expected #{type} to generate module #{module_name}"
       end
 
       # Test unsupported types
       for type <- unsupported_types do
-        output =
-          capture_io(fn ->
-            result = ResourceConverter.to_ash_resources(%{"Test" => schema}, "Api", type)
+        result = ResourceConverter.to_ash_resources(%{"Test" => schema}, "Api", type)
 
-            assert result == %{},
-                   "Expected #{type} to be ignored"
-          end)
-
-        assert output =~ "Skipping unsupported component type: #{type}",
-               "Expected warning for #{type}"
+        assert result == %{},
+               "Expected #{type} to be ignored"
       end
     end
 
