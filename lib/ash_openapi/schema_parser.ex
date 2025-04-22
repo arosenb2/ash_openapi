@@ -3,6 +3,8 @@ defmodule AshOpenApi.SchemaParser do
   Parses OpenAPI documents and stores their schemas in the AshOpenApi.Context.
   """
 
+  alias AshOpenApi.Context
+
   @doc """
   Takes an OpenAPI document (either as JSON or YAML string, or as decoded map)
   and stores all its schemas in the Context.
@@ -26,11 +28,8 @@ defmodule AshOpenApi.SchemaParser do
     # Convert the OpenAPI document into an OpenApiSpex struct
     spec = OpenApiSpex.OpenApi.Decode.decode(openapi_doc)
 
-    # Start the context if not already started
-    case AshOpenApi.Context.start_link() do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
+    # Reset the context to ensure clean state
+    Context.reset()
 
     # Store all schemas from the components section
     schemas = get_in(spec, [Access.key(:components), Access.key(:schemas)]) || %{}

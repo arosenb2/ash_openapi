@@ -1,10 +1,15 @@
 defmodule AshOpenApi.ResourceConverterTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias OpenApiSpex.{Reference, Schema}
   alias AshOpenApi.{ResourceConverter, Context}
+  import ExUnit.CaptureIO
 
   setup do
-    start_supervised!({Context, []}, restart: :temporary)
+    # Stop any existing context
+    Context.stop()
+    # Start a fresh context
+    {:ok, _} = Context.start_link()
+    on_exit(fn -> Context.stop() end)
     :ok
   end
 
@@ -245,6 +250,105 @@ defmodule AshOpenApi.ResourceConverterTest do
 
       assert status_module =~ "@moduledoc"
       assert status_module =~ "The status of the item"
+    end
+
+    test "ignores unsupported component types" do
+      schemas = %{
+        "x-apiture-errors" => nil,
+        "some-extension" => %Schema{
+          type: :object,
+          properties: %{
+            code: %Schema{type: :string}
+          }
+        }
+      }
+
+      output =
+        capture_io(fn ->
+          result = ResourceConverter.to_ash_resources(schemas, "Api", "extensions")
+          assert result == %{}
+        end)
+
+      assert output =~ "Skipping unsupported component type: extensions"
+    end
+
+    test "handles nil schemas in supported component types" do
+      schemas = %{
+        "ValidSchema" => %Schema{
+          type: :object,
+          properties: %{
+            name: %Schema{type: :string}
+          }
+        },
+        "NilSchema" => nil
+      }
+
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "schemas")
+
+      # Should only contain the valid schema
+      assert map_size(result) == 1
+      assert Map.has_key?(result, "AshOpenapi.Api.Schemas.ValidSchema")
+    end
+
+    test "processes only supported component types" do
+      supported_types = ~w(schemas responses headers parameters)
+      unsupported_types = ~w(extensions securitySchemes)
+
+      schema = %Schema{
+        type: :object,
+        properties: %{
+          name: %Schema{type: :string}
+        }
+      }
+
+      # Test supported types
+      for type <- supported_types do
+        result = ResourceConverter.to_ash_resources(%{"Test" => schema}, "Api", type)
+
+        assert map_size(result) == 1,
+               "Expected #{type} to be processed"
+      end
+
+      # Test unsupported types
+      for type <- unsupported_types do
+        output =
+          capture_io(fn ->
+            result = ResourceConverter.to_ash_resources(%{"Test" => schema}, "Api", type)
+
+            assert result == %{},
+                   "Expected #{type} to be ignored"
+          end)
+
+        assert output =~ "Skipping unsupported component type: #{type}",
+               "Expected warning for #{type}"
+      end
+    end
+
+    test "handles mixed valid and nil schemas" do
+      schemas = %{
+        "ValidEnum" => %Schema{
+          type: :string,
+          enum: ["one", "two"],
+          description: "A valid enum"
+        },
+        "NilSchema" => nil,
+        "ValidObject" => %Schema{
+          type: :object,
+          properties: %{
+            field: %Schema{type: :string}
+          }
+        }
+      }
+
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "schemas")
+
+      assert map_size(result) == 2
+      assert Map.has_key?(result, "AshOpenapi.Api.Schemas.ValidEnum")
+      assert Map.has_key?(result, "AshOpenapi.Api.Schemas.ValidObject")
+
+      # Verify enum was generated correctly
+      assert result["AshOpenapi.Api.Schemas.ValidEnum"] =~
+               "use Ash.Type.Enum, values: [\"one\", \"two\"]"
     end
   end
 end

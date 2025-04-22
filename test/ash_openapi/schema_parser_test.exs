@@ -1,7 +1,16 @@
 defmodule AshOpenApi.SchemaParserTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias AshOpenApi.{SchemaParser, Context}
+
+  setup do
+    # Stop any existing context
+    Context.stop()
+    # Start a fresh context
+    {:ok, _} = Context.start_link()
+    on_exit(fn -> Context.stop() end)
+    :ok
+  end
 
   describe "parse_and_store/1" do
     test "successfully parses and stores schemas from YAML" do

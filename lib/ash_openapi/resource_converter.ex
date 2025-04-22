@@ -6,6 +6,8 @@ defmodule AshOpenApi.ResourceConverter do
   alias OpenApiSpex.{Reference, Schema}
   alias AshOpenApi.{TypeConverter, Context}
 
+  @supported_component_types ~w(schemas responses headers parameters)
+
   @doc """
   Converts OpenAPI schemas into Ash Resource modules.
   Returns a map of module names to their content as strings.
@@ -19,7 +21,8 @@ defmodule AshOpenApi.ResourceConverter do
         "MyApp.Api.Schemas.Post" => "defmodule MyApp.Api.Schemas.Post do\\n..."
       }
   """
-  def to_ash_resources(schemas, namespace, component_type) do
+  def to_ash_resources(schemas, namespace, component_type)
+      when component_type in @supported_component_types do
     Context.setup(schemas, namespace)
 
     schemas
@@ -28,7 +31,17 @@ defmodule AshOpenApi.ResourceConverter do
       content = generate_module(name, schema, component_type)
       {module_name, content}
     end)
+    |> Enum.reject(fn {_, content} -> is_nil(content) end)
     |> Map.new()
+  end
+
+  def to_ash_resources(_schemas, _namespace, component_type) do
+    Mix.shell().info([:yellow, "* Skipping unsupported component type: #{component_type}"])
+    %{}
+  end
+
+  defp generate_module(_name, nil, _component_type) do
+    nil
   end
 
   defp generate_module(name, %Schema{type: :string, enum: values} = schema, component_type)
@@ -44,8 +57,12 @@ defmodule AshOpenApi.ResourceConverter do
     """
   end
 
-  defp generate_module(name, schema, component_type) do
+  defp generate_module(name, %Schema{} = schema, component_type) do
     generate_resource_module(name, schema, component_type)
+  end
+
+  defp generate_module(_name, _schema, _component_type) do
+    nil
   end
 
   defp generate_resource_module(
@@ -56,8 +73,11 @@ defmodule AshOpenApi.ResourceConverter do
     required = required || []
     attributes = extract_attributes(props, required)
 
+    namespace = Context.namespace()
+    app_name = Context.app_name()
+
     """
-    defmodule #{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name} do
+    defmodule #{app_name}.#{namespace}.#{Macro.camelize(component_type)}.#{name} do
       use Ash.Resource,
         data_layer: :embedded
 

@@ -14,17 +14,64 @@ defmodule AshOpenApi.Context do
   @doc """
   Starts the context agent.
   """
-  def start_link(_opts \\ []) do
-    Agent.start_link(fn -> %{schemas: %{}, namespace: nil} end, name: __MODULE__)
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    # Stop any existing process with this name
+    if Process.whereis(name), do: Process.exit(Process.whereis(name), :normal)
+
+    Agent.start_link(
+      fn -> %{schemas: %{}, namespace: nil} end,
+      name: name
+    )
+  end
+
+  @doc """
+  Resets the context to its initial state.
+  """
+  def reset do
+    case Process.whereis(__MODULE__) do
+      nil -> start_link()
+      _ -> Agent.update(__MODULE__, fn _ -> %{schemas: %{}, namespace: nil} end)
+    end
+  end
+
+  @doc """
+  Stops the context agent.
+  """
+  def stop do
+    case Process.whereis(__MODULE__) do
+      nil ->
+        :ok
+
+      pid ->
+        ref = Process.monitor(pid)
+        Process.exit(pid, :normal)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} -> :ok
+        after
+          1000 -> :ok
+        end
+    end
   end
 
   @doc """
   Sets up the context with schemas and namespace.
   """
   def setup(schemas, namespace) do
-    Agent.update(__MODULE__, fn _ ->
-      %{schemas: schemas, namespace: namespace}
-    end)
+    case Process.whereis(__MODULE__) do
+      nil ->
+        {:ok, _} = start_link()
+
+        Agent.update(__MODULE__, fn _ ->
+          %{schemas: schemas, namespace: namespace}
+        end)
+
+      _ ->
+        Agent.update(__MODULE__, fn _ ->
+          %{schemas: schemas, namespace: namespace}
+        end)
+    end
   end
 
   @doc """
