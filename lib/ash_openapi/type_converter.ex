@@ -45,6 +45,14 @@ defmodule AshOpenApi.TypeConverter do
     # Format: "#/components/{type}/{name}"
     [_, "components", component_type, schema_name] = String.split(ref."$ref", "/")
 
+    # For parameters, use just the base name without any operation prefix
+    schema_name =
+      if component_type == "parameters" do
+        schema_name |> String.split(".") |> List.last()
+      else
+        schema_name
+      end
+
     # Build the full module name
     "#{AshOpenApi.Context.app_name()}.#{AshOpenApi.Context.namespace()}.#{Macro.camelize(component_type)}.#{schema_name}"
   end

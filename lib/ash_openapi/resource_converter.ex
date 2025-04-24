@@ -400,7 +400,19 @@ defmodule AshOpenApi.ResourceConverter do
         generate_response_module_name(name)
 
       component_type == "parameters" and String.contains?(name, ".") ->
-        generate_operation_parameter_module_name(name)
+        # For operation parameters, if they're references, we'll use the component parameter module
+        case String.split(name, ".", parts: 3) do
+          [operation_id, "Parameters", param_name] ->
+            # Check if this is a reference to a component parameter
+            if is_reference?(param_name) do
+              generate_component_parameter_module_name(param_name)
+            else
+              "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Parameters.#{param_name}"
+            end
+
+          _ ->
+            generate_component_parameter_module_name(name)
+        end
 
       component_type == "parameters" ->
         generate_component_parameter_module_name(name)
@@ -448,16 +460,22 @@ defmodule AshOpenApi.ResourceConverter do
     |> Macro.camelize()
   end
 
-  defp generate_operation_parameter_module_name(name) do
-    [operation_id, _parameters, param_name] = String.split(name, ".", parts: 3)
-    "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Parameters.#{param_name}"
-  end
-
   defp generate_component_parameter_module_name(name) do
     "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{name}"
   end
 
   defp generate_default_module_name(name, component_type) do
     "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name}"
+  end
+
+  # Helper function to check if a parameter name is a reference
+  defp is_reference?(param_name) do
+    schemas = Context.get_all_schemas()
+    key = "parameters/#{param_name}"
+
+    case List.keyfind(schemas, key, 0) do
+      {^key, %Reference{}} -> true
+      _ -> false
+    end
   end
 end

@@ -105,18 +105,25 @@ defmodule AshOpenApi.SchemaExtractor do
        when is_list(parameters) do
     parameters
     |> Enum.flat_map(fn
-      %Reference{"$ref": ref_path} = ref ->
-        # Extract the parameter name from the reference path
-        # Format: "#/components/parameters/{name}"
-        param_name = ref_path |> String.split("/") |> List.last()
-        [{"parameters/#{operation_id}.Parameters.#{param_name}", ref}]
+      %Reference{} = ref ->
+        # For references, we'll only store the reference in the operation's parameters
+        # but we won't duplicate the actual parameter definition
+        [{"parameters/#{operation_id}.Parameters.#{get_parameter_name_from_ref(ref)}", ref}]
 
       parameter ->
+        # For inline parameters, we'll store them with the operation's namespace
         case normalize_schema(parameter.schema) do
           nil -> []
-          schema -> [{"parameters/#{operation_id}.Parameters.#{parameter.name}", schema}]
+          schema -> [{"parameters/#{parameter.name}", schema}]
         end
     end)
+  end
+
+  # Helper function to extract parameter name from reference
+  defp get_parameter_name_from_ref(%Reference{"$ref": ref}) do
+    ref
+    |> String.split("/")
+    |> List.last()
   end
 
   defp normalize_schema(%Reference{} = ref), do: ref

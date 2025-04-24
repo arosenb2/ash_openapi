@@ -55,7 +55,7 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
 
   @impl Igniter.Mix.Task
   def igniter(igniter) do
-    app_name = Mix.Project.config()[:app]
+    app_name = Mix.Project.get().project()[:app]
     opts = igniter.args.options
 
     # Parse the OpenAPI definition
@@ -85,52 +85,54 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
 
     Debug.log("Grouped schemas by type: #{inspect(Map.keys(schemas_by_type))}", opts)
 
-    # Generate resources for each component type
-    for {component_type, type_schemas} <- schemas_by_type do
-      Debug.log("Processing component type: #{component_type}", opts)
+    updated_igniter =
+      Enum.reduce(schemas_by_type, igniter, fn {component_type, type_schemas}, acc_igniter ->
+        Debug.log("Processing component type: #{component_type}", opts)
 
-      # Convert schemas to resources
-      resources =
-        ResourceConverter.to_ash_resources(
-          type_schemas,
-          Keyword.get(opts, :namespace),
-          component_type
-        )
-
-      if map_size(resources) > 0 do
-        Debug.log("Generated #{map_size(resources)} resources for #{component_type}", opts)
-
-        # Create or update each resource module
-        for {module_name, content} <- resources do
-          file_name = module_name |> String.split(".") |> List.last() |> Macro.underscore()
-
-          file_path =
-            Path.join([
-              "lib",
-              to_string(app_name),
-              Keyword.get(opts, :namespace),
-              Macro.camelize(component_type),
-              "#{file_name}.ex"
-            ])
-
-          Debug.log("Writing resource to #{file_path}", opts)
-
-          Module.find_and_update_or_create_module(
-            igniter,
-            String.to_atom(module_name),
-            content,
-            fn zipper ->
-              ast = Code.string_to_quoted!(content)
-              {:ok, Sourceror.Zipper.replace(zipper, ast)}
-            end,
-            path: file_path
+        # Convert schemas to resources
+        resources =
+          ResourceConverter.to_ash_resources(
+            type_schemas,
+            Keyword.get(opts, :namespace),
+            component_type
           )
+
+        if map_size(resources) > 0 do
+          Debug.log("Generated #{map_size(resources)} resources for #{component_type}", opts)
+
+          # Reduce over resources to thread igniter through each module creation
+          Enum.reduce(resources, acc_igniter, fn {module_name, content}, inner_igniter ->
+            file_name = module_name |> String.split(".") |> List.last() |> Macro.underscore()
+
+            file_path =
+              Path.join([
+                "lib",
+                to_string(app_name),
+                Keyword.get(opts, :namespace),
+                Macro.camelize(component_type),
+                "#{file_name}.ex"
+              ])
+
+            Debug.log("Writing resource to #{file_path}", opts)
+
+            Module.find_and_update_or_create_module(
+              inner_igniter,
+              String.to_atom(module_name),
+              content,
+              fn zipper ->
+                ast = Code.string_to_quoted!(content)
+                {:ok, Sourceror.Zipper.replace(zipper, ast)}
+              end,
+              path: file_path
+            )
+          end)
+        else
+          acc_igniter
         end
-      end
-    end
+      end)
 
     Mix.shell().info([:green, "* Generated Ash resources from OpenAPI definition"])
 
-    igniter
+    updated_igniter
   end
 end
