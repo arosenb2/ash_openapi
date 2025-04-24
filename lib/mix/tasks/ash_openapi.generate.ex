@@ -130,5 +130,7 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
     end
 
     Mix.shell().info([:green, "* Generated Ash resources from OpenAPI definition"])
+
+    igniter
   end
 end
