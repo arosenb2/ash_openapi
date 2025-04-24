@@ -50,7 +50,7 @@ defmodule AshOpenApi.SchemaExtractor do
           [
             extract_request_body_schemas(operation.requestBody, path),
             extract_response_schemas(operation.responses, path),
-            extract_parameter_schemas(operation.parameters, path)
+            extract_parameter_schemas(operation.parameters, operation)
           ]
 
         _ ->
@@ -101,7 +101,8 @@ defmodule AshOpenApi.SchemaExtractor do
 
   defp extract_parameter_schemas(nil, _path), do: []
 
-  defp extract_parameter_schemas(parameters, path) when is_list(parameters) do
+  defp extract_parameter_schemas(parameters, %Operation{operationId: operation_id})
+       when is_list(parameters) do
     parameters
     |> Enum.flat_map(fn
       %Reference{} ->
@@ -110,7 +111,7 @@ defmodule AshOpenApi.SchemaExtractor do
       parameter ->
         case normalize_schema(parameter.schema) do
           nil -> []
-          schema -> [{"parameters/#{path}_#{parameter.name}", schema}]
+          schema -> [{"parameters/#{operation_id}.Parameters.#{parameter.name}", schema}]
         end
     end)
   end

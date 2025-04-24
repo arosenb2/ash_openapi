@@ -111,6 +111,7 @@ defmodule AshOpenApi.SchemaExtractorTest do
         paths: %{
           "/users/{id}" => %PathItem{
             get: %Operation{
+              operationId: "getUserById",
               parameters: [
                 %Parameter{
                   name: "id",
@@ -129,8 +130,8 @@ defmodule AshOpenApi.SchemaExtractorTest do
       }
 
       schemas = SchemaExtractor.extract_all_schemas(spec)
-      assert schemas["parameters//users/{id}_id"].type == :string
-      assert schemas["parameters//users/{id}_id"].format == :uuid
+      assert schemas["parameters/getUserById.Parameters.id"].type == :string
+      assert schemas["parameters/getUserById.Parameters.id"].format == :uuid
     end
 
     test "handles references in schemas" do

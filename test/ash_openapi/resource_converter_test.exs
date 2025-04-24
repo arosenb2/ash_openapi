@@ -170,7 +170,7 @@ defmodule AshOpenApi.ResourceConverterTest do
 
       assert product_module =~ "min_length: 3"
       assert product_module =~ "max_length: 50"
-      assert product_module =~ ~s(match: ~r/^[A-Za-z]/)
+      assert product_module =~ ~s|match: Regex.compile!("^[A-Za-z]")|
       assert product_module =~ "min: 0"
       assert product_module =~ "exclusive_min?: true"
       assert product_module =~ "max: 1000"
@@ -245,7 +245,7 @@ defmodule AshOpenApi.ResourceConverterTest do
       status_module = result["AshOpenapi.Api.Schemas.Status"]
 
       assert status_module =~
-               "use Ash.Type.Enum, values: [\"pending\", \"active\", \"completed\"]"
+               "use Ash.Type.Enum, values: [:pending, :active, :completed]"
 
       assert status_module =~ "@moduledoc"
       assert status_module =~ "The status of the item"
@@ -342,7 +342,45 @@ defmodule AshOpenApi.ResourceConverterTest do
 
       # Verify enum was generated correctly
       assert result["AshOpenapi.Api.Schemas.ValidEnum"] =~
-               "use Ash.Type.Enum, values: [\"one\", \"two\"]"
+               "use Ash.Type.Enum, values: [:one, :two]"
+    end
+
+    test "handles raw map schemas" do
+      schemas = %{
+        "Address" => %{
+          "type" => "object",
+          "properties" => %{
+            "address1" => %{
+              "type" => "string",
+              "format" => "text",
+              "maxLength" => 35,
+              "description" => "The first line of the postal address",
+              "example" => "1600 Pennsylvania Ave NW"
+            },
+            "zipCode" => %{
+              "type" => "string",
+              "pattern" => "^\\d{5}(-\\d{4})?$",
+              "description" => "ZIP code"
+            }
+          },
+          "required" => ["address1"]
+        }
+      }
+
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "schemas")
+
+      assert map_size(result) == 1
+      module_content = result["AshOpenapi.Api.Schemas.Address"]
+
+      # Verify the content includes the converted attributes
+      assert module_content =~ "attribute :address1, :string"
+      assert module_content =~ "description: \"The first line of the postal address\""
+      assert module_content =~ "max_length: 35"
+      assert module_content =~ "allow_nil?: false"
+
+      assert module_content =~ "attribute :zipCode, :string"
+      assert module_content =~ ~s|match: Regex.compile!("^\\\\d{5}(-\\\\d{4})?$")|
+      assert module_content =~ "description: \"ZIP code\""
     end
   end
 end

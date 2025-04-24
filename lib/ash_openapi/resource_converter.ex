@@ -3,6 +3,7 @@ defmodule AshOpenApi.ResourceConverter do
   Converts OpenAPI schemas into Ash Embedded Resources.
   """
 
+  alias AshOpenApi.Debug
   alias OpenApiSpex.{Reference, Schema}
   alias AshOpenApi.{TypeConverter, Context}
 
@@ -21,18 +22,80 @@ defmodule AshOpenApi.ResourceConverter do
         "MyApp.Api.Schemas.Post" => "defmodule MyApp.Api.Schemas.Post do\\n..."
       }
   """
+  def to_ash_resources(schemas, namespace, "headers" = component_type) do
+    Context.setup(schemas, namespace)
+
+    result =
+      schemas
+      |> Enum.map(fn {name, schema} ->
+        module_name = generate_module_name(name, component_type)
+        content = generate_module(name, schema, component_type)
+
+        # Add debug output
+        if content do
+          Mix.shell().info([:green, "* Generated #{module_name}:\n", :reset])
+        end
+
+        {module_name, content}
+      end)
+      |> Enum.reject(fn {_, content} -> is_nil(content) end)
+      |> Map.new()
+
+    Mix.shell().info([:yellow, "* Generated #{map_size(result)} resources for #{component_type}"])
+
+    result
+  end
+
   def to_ash_resources(schemas, namespace, component_type)
       when component_type in @supported_component_types do
     Context.setup(schemas, namespace)
 
-    schemas
-    |> Enum.map(fn {name, schema} ->
-      module_name = "#{Context.app_name()}.#{namespace}.#{Macro.camelize(component_type)}.#{name}"
-      content = generate_module(name, schema, component_type)
-      {module_name, content}
-    end)
-    |> Enum.reject(fn {_, content} -> is_nil(content) end)
-    |> Map.new()
+    result =
+      schemas
+      |> Enum.map(fn {name, schema} ->
+        module_name = generate_module_name(name, component_type)
+        content = generate_module(name, schema, component_type)
+
+        # Add debug output
+        if content do
+          Mix.shell().info([:green, "* Generated #{module_name}:\n", :reset])
+        end
+
+        {module_name, content}
+      end)
+      |> Enum.reject(fn {_, content} -> is_nil(content) end)
+      |> Map.new()
+
+    # Add summary debug output
+    Mix.shell().info([:yellow, "* Generated #{map_size(result)} resources for #{component_type}"])
+
+    result
+  end
+
+  def to_ash_resources(schemas, namespace, "parameters" = component_type) do
+    Context.setup(schemas, namespace)
+
+    result =
+      schemas
+      |> Enum.map(fn {name, schema} ->
+        # Just use the name directly with the Parameters namespace
+        module_name = generate_module_name(name, component_type)
+        content = generate_module(name, schema, component_type)
+
+        # Add debug output
+        if content do
+          Mix.shell().info([:green, "* Generated #{module_name}:\n", :reset])
+        end
+
+        {module_name, content}
+      end)
+      |> Enum.reject(fn {_, content} -> is_nil(content) end)
+      |> Map.new()
+
+    # Add summary debug output
+    Mix.shell().info([:yellow, "* Generated #{map_size(result)} resources for #{component_type}"])
+
+    result
   end
 
   def to_ash_resources(_schemas, _namespace, component_type) do
@@ -46,13 +109,19 @@ defmodule AshOpenApi.ResourceConverter do
 
   defp generate_module(name, %Schema{type: :string, enum: values} = schema, component_type)
        when not is_nil(values) do
+    # Convert string values to atoms
+    atom_values = Enum.map(values, &String.to_atom/1)
+
     """
     defmodule #{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name} do
       @moduledoc \"\"\"
       #{name}
       #{schema.description || ""}
       \"\"\"
-      use Ash.Type.Enum, values: #{inspect(values)}
+      use Ash.Type.Enum, values: #{inspect(atom_values)}
+
+      def match(value) when is_binary(value), do: {:ok, String.to_atom(value)}
+      def match(value), do: super(value)
     end
     """
   end
@@ -61,20 +130,61 @@ defmodule AshOpenApi.ResourceConverter do
     generate_resource_module(name, schema, component_type)
   end
 
-  defp generate_module(_name, _schema, _component_type) do
+  defp generate_module(
+         name,
+         %{"type" => "object", "properties" => props} = raw_schema,
+         component_type
+       ) do
+    # Convert the raw properties to Schema structs
+    properties =
+      Map.new(props, fn {key, value} ->
+        # Convert the raw property schema to a Schema struct directly
+        schema = %Schema{
+          type: String.to_atom(value["type"]),
+          description: value["description"],
+          format: value["format"] && String.to_atom(value["format"]),
+          maxLength: value["maxLength"],
+          minLength: value["minLength"],
+          pattern: value["pattern"],
+          enum: value["enum"],
+          nullable: value["nullable"],
+          default: value["default"]
+        }
+
+        {key, schema}
+      end)
+
+    # Create a Schema struct for the object
+    schema = %Schema{
+      type: :object,
+      properties: properties,
+      required: Map.get(raw_schema, "required", [])
+    }
+
+    generate_resource_module(name, schema, component_type)
+  end
+
+  defp generate_module(_name, %Reference{}, _component_type) do
+    # For references, we don't need to generate a new resource
     nil
   end
 
   defp generate_resource_module(
          name,
-         %Schema{properties: props, required: required},
+         %Schema{properties: props, required: required} = schema,
          component_type
        ) do
     required = required || []
-    attributes = extract_attributes(props, required)
+
+    attributes = extract_attributes(schema, props, required)
+    Debug.log("Generated attributes: #{inspect(attributes)}", verbose: true)
 
     namespace = Context.namespace()
     app_name = Context.app_name()
+
+    if Enum.empty?(attributes) do
+      Debug.log("Warning: No attributes generated for #{name}", verbose: true)
+    end
 
     """
     defmodule #{app_name}.#{namespace}.#{Macro.camelize(component_type)}.#{name} do
@@ -88,9 +198,11 @@ defmodule AshOpenApi.ResourceConverter do
     """
   end
 
-  defp extract_attributes(nil, _required), do: []
+  defp extract_attributes(_schema, nil, _required), do: []
 
-  defp extract_attributes(props, required) when is_map(props) do
+  defp extract_attributes(schema, props, required) when is_map(props) do
+    Debug.log("schema: #{inspect(schema)}, props: #{inspect(props)}", verbose: true)
+
     props
     |> Enum.map(fn {name, property} ->
       generate_attribute(name, property, to_string(name) in required)
@@ -138,9 +250,52 @@ defmodule AshOpenApi.ResourceConverter do
         do: ", constraints: [\n      #{Enum.join(constraints, ",\n      ")}\n    ]",
         else: ""
 
+    # Convert string name to atom
+    attribute_name = if is_binary(name), do: String.to_atom(name), else: name
+
     """
-    attribute #{inspect(name)}, #{inspect(type)}#{description}#{default}#{allow_nil}, public?: true#{constraints_str}
+    attribute #{inspect(attribute_name)}, #{inspect(type)}#{description}#{default}#{allow_nil}, public?: true#{constraints_str}
     """
+  end
+
+  defp generate_attribute(name, %{"type" => _type, "allOf" => schemas} = schema, required) do
+    # For allOf, we need to merge all the schemas together
+    base_schema = Map.drop(schema, ["allOf"])
+
+    # Convert each schema in allOf and merge them with the base schema
+    merged_schema =
+      schemas
+      |> Enum.reduce(base_schema, fn schema, acc ->
+        Map.merge(acc, schema)
+      end)
+
+    # Now process as a normal schema
+    generate_attribute(name, merged_schema, required)
+  end
+
+  defp generate_attribute(name, %{"type" => type} = schema, required) do
+    # Manually map the known OpenAPI schema properties to Schema struct fields
+    decoded_schema = %Schema{
+      type: String.to_atom(type),
+      description: schema["description"],
+      format: schema["format"] && String.to_atom(schema["format"]),
+      maxLength: schema["maxLength"],
+      minLength: schema["minLength"],
+      pattern: schema["pattern"],
+      enum: schema["enum"],
+      nullable: schema["nullable"],
+      default: schema["default"]
+    }
+
+    Debug.log("name: #{inspect(name)}, schema: #{inspect(decoded_schema)}", verbose: true)
+    generate_attribute(name, decoded_schema, required)
+  end
+
+  defp generate_attribute(name, schema, _required) do
+    Debug.log("skipping - name: #{inspect(name)}, schema: #{inspect(schema)}", verbose: true)
+    # schema = OpenApiSpex.OpenApi.Decode.decode(%{"schema" => schema})[:schema]
+    # generate_attribute(name, schema, required)
+    nil
   end
 
   defp build_constraints(%Schema{} = schema) do
@@ -163,7 +318,7 @@ defmodule AshOpenApi.ResourceConverter do
   defp pattern_constraint(%Schema{pattern: nil}), do: nil
 
   defp pattern_constraint(%Schema{pattern: pattern}) do
-    "match: ~r/#{pattern}/"
+    "match: Regex.compile!(#{inspect(pattern)})"
   end
 
   defp length_constraints(schema) do
@@ -231,5 +386,42 @@ defmodule AshOpenApi.ResourceConverter do
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map_join("\n", fn line -> String.duplicate(" ", spaces) <> line end)
+  end
+
+  defp generate_module_name(name, component_type) do
+    cond do
+      # For component schemas (e.g., "User")
+      component_type == "schemas" ->
+        "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{name}"
+
+      # For headers (e.g., "ETag")
+      component_type == "headers" ->
+        "#{Context.app_name()}.#{Context.namespace()}.Headers.#{name}"
+
+      # For operation responses (e.g., "GetUser.Responses200.ApplicationJson")
+      component_type == "responses" and String.contains?(name, ".") ->
+        [operation_id, status, content_type] = String.split(name, ".", parts: 3)
+
+        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Responses#{status}.#{content_type}"
+
+      # For operation request bodies (e.g., "CreateUser.RequestBodies.ApplicationJson")
+      component_type == "requestBodies" and String.contains?(name, ".") ->
+        [operation_id, _request_bodies, content_type] = String.split(name, ".", parts: 3)
+
+        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.RequestBodies.#{content_type}"
+
+      # For operation parameters (e.g., "GetUserById.Parameters.Id")
+      component_type == "parameters" and String.contains?(name, ".") ->
+        [operation_id, _parameters, param_name] = String.split(name, ".", parts: 3)
+        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Parameters.#{param_name}"
+
+      # For component parameters (e.g., "limitQueryParam")
+      component_type == "parameters" ->
+        "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{name}"
+
+      # Default case for other component types
+      true ->
+        "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name}"
+    end
   end
 end
