@@ -34,6 +34,21 @@ defmodule AshOpenApi.SchemaConverter do
     }
   end
 
+  def convert_schema(%{"allOf" => schemas} = schema) when is_list(schemas) do
+    # Convert the base schema
+    base_schema = Map.drop(schema, ["allOf"])
+    base = convert_schema(base_schema)
+
+    # Convert and merge all schemas in allOf
+    merged =
+      Enum.reduce(schemas, base, fn schema, acc ->
+        converted = convert_schema(schema)
+        Map.merge(acc, converted)
+      end)
+
+    %Schema{merged | allOf: schemas}
+  end
+
   @doc """
   Converts a map of OpenAPI schema properties into a map of OpenApiSpex.Schema structs.
   Each property in the input map is converted using convert_schema/1.

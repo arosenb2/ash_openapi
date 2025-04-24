@@ -107,22 +107,20 @@ defmodule AshOpenApi.ResourceConverter do
     nil
   end
 
-  defp generate_module(name, %Schema{type: :string, enum: values} = schema, component_type)
+  defp generate_module(name, %Schema{type: :string, enum: values} = schema, _component_type)
        when not is_nil(values) do
     # Convert string values to atoms
     atom_values = Enum.map(values, &String.to_atom/1)
 
     """
-    defmodule #{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name} do
-      @moduledoc \"\"\"
-      #{name}
-      #{schema.description || ""}
-      \"\"\"
-      use Ash.Type.Enum, values: #{inspect(atom_values)}
+    @moduledoc \"\"\"
+    #{name}
+    #{schema.description || ""}
+    \"\"\"
+    use Ash.Type.Enum, values: #{inspect(atom_values)}
 
-      def match(value) when is_binary(value), do: {:ok, String.to_atom(value)}
-      def match(value), do: super(value)
-    end
+    def match(value) when is_binary(value), do: {:ok, String.to_atom(value)}
+    def match(value), do: super(value)
     """
   end
 
@@ -253,19 +251,103 @@ defmodule AshOpenApi.ResourceConverter do
     """
   end
 
-  defp generate_attribute(name, %{"type" => _type, "allOf" => schemas} = schema, required) do
-    # For allOf, we need to merge all the schemas together
-    base_schema = Map.drop(schema, ["allOf"])
+  defp generate_attribute(
+         name,
+         %Schema{allOf: schemas, required: base_required} = base_schema,
+         required
+       )
+       when is_list(schemas) do
+    # Drop the allOf field from the base schema but keep other fields
+    base_schema = Map.drop(base_schema, [:allOf])
 
-    # Convert each schema in allOf and merge them with the base schema
+    # Convert each schema in allOf, resolving references if needed
     merged_schema =
       schemas
-      |> Enum.reduce(base_schema, fn schema, acc ->
-        Map.merge(acc, schema)
+      |> Enum.reduce({base_schema, base_required || []}, fn
+        %Reference{} = ref, {acc_schema, acc_required} ->
+          referenced_schema = resolve_reference(ref)
+
+          {
+            Map.merge(acc_schema, referenced_schema),
+            (referenced_schema.required || []) ++ acc_required
+          }
+
+        schema, {acc_schema, acc_required} ->
+          {
+            Map.merge(acc_schema, schema),
+            (schema.required || []) ++ acc_required
+          }
+      end)
+      |> then(fn {schema, all_required} ->
+        %{schema | required: Enum.uniq(all_required)}
       end)
 
     # Now process as a normal schema
     generate_attribute(name, merged_schema, required)
+  end
+
+  defp generate_attribute(name, %{"allOf" => schemas} = schema, required) do
+    # For allOf, we need to merge all the schemas together
+    base_schema = Map.drop(schema, ["allOf"])
+    base_required = schema["required"] || []
+
+    # Convert each schema in allOf and merge them with the base schema
+    {merged_schema, all_required} =
+      schemas
+      |> Enum.reduce({base_schema, base_required}, fn
+        %{"$ref" => ref}, {acc_schema, acc_required} ->
+          # Convert reference to Reference struct and resolve it
+          referenced_schema = resolve_reference(%Reference{:"$ref" => ref})
+
+          {
+            Map.merge(acc_schema, referenced_schema),
+            (referenced_schema.required || []) ++ acc_required
+          }
+
+        %Reference{} = ref, {acc_schema, acc_required} ->
+          referenced_schema = resolve_reference(ref)
+
+          {
+            Map.merge(acc_schema, referenced_schema),
+            (referenced_schema.required || []) ++ acc_required
+          }
+
+        %Schema{} = schema, {acc_schema, acc_required} ->
+          {
+            Map.merge(acc_schema, schema),
+            (schema.required || []) ++ acc_required
+          }
+
+        schema, {acc_schema, acc_required} when is_map(schema) ->
+          # Handle inline schema
+          {
+            Map.merge(acc_schema, schema),
+            (schema["required"] || []) ++ acc_required
+          }
+      end)
+
+    # Ensure unique required fields and add them to the merged schema
+    merged_schema = Map.put(merged_schema, "required", Enum.uniq(all_required))
+
+    # Now process as a normal schema
+    case merged_schema do
+      %Schema{} ->
+        generate_attribute(name, merged_schema, required)
+
+      schema when is_map(schema) ->
+        # If it's still a raw map, convert type and process
+        if Map.has_key?(schema, "type") do
+          generate_attribute(name, %{"type" => schema["type"]} |> Map.merge(schema), required)
+        else
+          # If no type specified, default to object
+          generate_attribute(name, Map.put(schema, "type", "object"), required)
+        end
+    end
+  end
+
+  defp generate_attribute(name, %{"$ref" => ref}, required) do
+    # Convert to Reference struct and process
+    generate_attribute(name, %Reference{:"$ref" => ref}, required)
   end
 
   defp generate_attribute(name, %{"type" => type} = schema, required) do
@@ -279,18 +361,21 @@ defmodule AshOpenApi.ResourceConverter do
       pattern: schema["pattern"],
       enum: schema["enum"],
       nullable: schema["nullable"],
-      default: schema["default"]
+      default: schema["default"],
+      properties: schema["properties"]
     }
 
     Debug.log("name: #{inspect(name)}, schema: #{inspect(decoded_schema)}", verbose: true)
     generate_attribute(name, decoded_schema, required)
   end
 
-  defp generate_attribute(name, schema, _required) do
-    Debug.log("skipping - name: #{inspect(name)}, schema: #{inspect(schema)}", verbose: true)
-    # schema = OpenApiSpex.OpenApi.Decode.decode(%{"schema" => schema})[:schema]
-    # generate_attribute(name, schema, required)
-    nil
+  defp resolve_reference(%Reference{"$ref": ref}) do
+    # Extract component type and name from the ref
+    # Format: "#/components/{type}/{name}"
+    [_, "components", component_type, schema_name] = String.split(ref, "/")
+
+    # Get the schema from context
+    Context.get_schema("#{component_type}/#{schema_name}")
   end
 
   defp build_constraints(%Schema{} = schema) do

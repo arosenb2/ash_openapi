@@ -115,9 +115,10 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
 
             Debug.log("Writing resource to #{file_path}", opts)
 
-            # Convert the module name to a proper format
             formatted_module_name =
-              module_name |> String.replace(~r/[()]/, "") |> String.to_atom()
+              module_name
+              |> String.split(".")
+              |> Elixir.Module.concat()
 
             Module.find_and_update_or_create_module(
               inner_igniter,
