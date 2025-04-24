@@ -105,8 +105,11 @@ defmodule AshOpenApi.SchemaExtractor do
        when is_list(parameters) do
     parameters
     |> Enum.flat_map(fn
-      %Reference{} ->
-        []
+      %Reference{"$ref": ref_path} = ref ->
+        # Extract the parameter name from the reference path
+        # Format: "#/components/parameters/{name}"
+        param_name = ref_path |> String.split("/") |> List.last()
+        [{"parameters/#{operation_id}.Parameters.#{param_name}", ref}]
 
       parameter ->
         case normalize_schema(parameter.schema) do

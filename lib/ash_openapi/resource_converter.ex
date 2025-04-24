@@ -390,38 +390,74 @@ defmodule AshOpenApi.ResourceConverter do
 
   defp generate_module_name(name, component_type) do
     cond do
-      # For component schemas (e.g., "User")
       component_type == "schemas" ->
-        "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{name}"
+        generate_schema_module_name(name)
 
-      # For headers (e.g., "ETag")
       component_type == "headers" ->
-        "#{Context.app_name()}.#{Context.namespace()}.Headers.#{name}"
+        generate_header_module_name(name)
 
-      # For operation responses (e.g., "GetUser.Responses200.ApplicationJson")
       component_type == "responses" and String.contains?(name, ".") ->
-        [operation_id, status, content_type] = String.split(name, ".", parts: 3)
+        generate_response_module_name(name)
 
-        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Responses#{status}.#{content_type}"
-
-      # For operation request bodies (e.g., "CreateUser.RequestBodies.ApplicationJson")
-      component_type == "requestBodies" and String.contains?(name, ".") ->
-        [operation_id, _request_bodies, content_type] = String.split(name, ".", parts: 3)
-
-        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.RequestBodies.#{content_type}"
-
-      # For operation parameters (e.g., "GetUserById.Parameters.Id")
       component_type == "parameters" and String.contains?(name, ".") ->
-        [operation_id, _parameters, param_name] = String.split(name, ".", parts: 3)
-        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Parameters.#{param_name}"
+        generate_operation_parameter_module_name(name)
 
-      # For component parameters (e.g., "limitQueryParam")
       component_type == "parameters" ->
-        "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{name}"
+        generate_component_parameter_module_name(name)
 
-      # Default case for other component types
       true ->
-        "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name}"
+        generate_default_module_name(name, component_type)
     end
+  end
+
+  defp generate_schema_module_name(name) do
+    "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{name}"
+  end
+
+  defp generate_header_module_name(name) do
+    "#{Context.app_name()}.#{Context.namespace()}.Headers.#{name}"
+  end
+
+  defp generate_response_module_name(name) do
+    # First, split by underscore to separate path_status from content_type
+    case String.split(name, "_", parts: 3) do
+      [path, status, content_type] ->
+        # Clean up the path (remove leading slash)
+        operation_id = String.trim_leading(path, "/")
+
+        sanitized_content_type = sanitize_content_type(content_type)
+
+        "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Responses#{status}.#{sanitized_content_type}"
+
+      _ ->
+        raise "Invalid response name format: #{name}"
+    end
+  end
+
+  defp sanitize_content_type(content_type) do
+    [base, subtype] = String.split(content_type, "/", parts: 2)
+
+    [base, subtype]
+    |> Enum.map(&sanitize_type_part/1)
+    |> Enum.join("")
+  end
+
+  defp sanitize_type_part(part) do
+    part
+    |> String.replace(~r/[^a-zA-Z0-9]/, "")
+    |> Macro.camelize()
+  end
+
+  defp generate_operation_parameter_module_name(name) do
+    [operation_id, _parameters, param_name] = String.split(name, ".", parts: 3)
+    "#{Context.app_name()}.#{Context.namespace()}.#{operation_id}.Parameters.#{param_name}"
+  end
+
+  defp generate_component_parameter_module_name(name) do
+    "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{name}"
+  end
+
+  defp generate_default_module_name(name, component_type) do
+    "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name}"
   end
 end
