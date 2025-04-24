@@ -384,5 +384,33 @@ defmodule AshOpenApi.ResourceConverterTest do
       assert module_content =~ ~s|match: Regex.compile!("^\\\\d{5}(-\\\\d{4})?$")|
       assert module_content =~ "description: \"ZIP code\""
     end
+
+    test "handles lowercase schema names" do
+      schemas = %{
+        "user_profile" => %Schema{
+          type: :object,
+          properties: %{
+            name: %Schema{type: :string},
+            email: %Schema{type: :string}
+          }
+        },
+        "api_error" => %Schema{
+          type: :object,
+          properties: %{
+            code: %Schema{type: :integer},
+            message: %Schema{type: :string}
+          }
+        }
+      }
+
+      result = ResourceConverter.to_ash_resources(schemas, "Api", "schemas")
+      assert map_size(result) == 2
+      assert Map.has_key?(result, "AshOpenapi.Api.Schemas.UserProfile")
+      assert Map.has_key?(result, "AshOpenapi.Api.Schemas.ApiError")
+
+      user_profile_module = result["AshOpenapi.Api.Schemas.UserProfile"]
+
+      api_error_module = result["AshOpenapi.Api.Schemas.ApiError"]
+    end
   end
 end

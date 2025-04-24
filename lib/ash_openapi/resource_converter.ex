@@ -418,11 +418,11 @@ defmodule AshOpenApi.ResourceConverter do
   end
 
   defp generate_schema_module_name(name) do
-    "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{name}"
+    "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{Macro.camelize(name)}"
   end
 
   defp generate_header_module_name(name) do
-    "#{Context.app_name()}.#{Context.namespace()}.Headers.#{name}"
+    "#{Context.app_name()}.#{Context.namespace()}.Headers.#{Macro.camelize(name)}"
   end
 
   defp generate_response_module_name(name) do
@@ -456,11 +456,11 @@ defmodule AshOpenApi.ResourceConverter do
   end
 
   defp generate_component_parameter_module_name(name) do
-    "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{name}"
+    "#{Context.app_name()}.#{Context.namespace()}.Parameters.#{Macro.camelize(name)}"
   end
 
   defp generate_default_module_name(name, component_type) do
-    "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{name}"
+    "#{Context.app_name()}.#{Context.namespace()}.#{Macro.camelize(component_type)}.#{Macro.camelize(name)}"
   end
 
   # Helper function to check if a parameter name is a reference
