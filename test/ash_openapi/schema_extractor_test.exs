@@ -130,8 +130,8 @@ defmodule AshOpenApi.SchemaExtractorTest do
       }
 
       schemas = SchemaExtractor.extract_all_schemas(spec)
-      assert schemas["parameters/getUserById.Parameters.id"].type == :string
-      assert schemas["parameters/getUserById.Parameters.id"].format == :uuid
+      assert schemas["parameters/id"].type == :string
+      assert schemas["parameters/id"].format == :uuid
     end
 
     test "handles references in schemas" do
