@@ -34,8 +34,8 @@ defmodule AshOpenApi.ResourceConverterTest do
       assert Map.has_key?(result, "AshOpenapi.Api.Schemas.User")
 
       user_module = result["AshOpenapi.Api.Schemas.User"]
-
-      assert user_module =~ "defmodule AshOpenapi.Api.Schemas.User do"
+      assert user_module =~ "use Ash.Resource"
+      assert user_module =~ "data_layer: :embedded"
       assert user_module =~ "attribute :name, :string, allow_nil?: false, public?: true"
     end
 
@@ -53,7 +53,8 @@ defmodule AshOpenApi.ResourceConverterTest do
       result = ResourceConverter.to_ash_resources(schemas, "Api", "headers")
       header_module = result["AshOpenapi.Api.Headers.StandardHeaders"]
 
-      assert header_module =~ "defmodule AshOpenapi.Api.Headers.StandardHeaders do"
+      assert header_module =~ "use Ash.Resource"
+      assert header_module =~ "data_layer: :embedded"
 
       assert header_module =~
                ~s(attribute :"X-Request-ID", :uuid, allow_nil?: false, public?: true)
@@ -74,7 +75,8 @@ defmodule AshOpenApi.ResourceConverterTest do
       result = ResourceConverter.to_ash_resources(schemas, "Api", "responses")
       response_module = result["AshOpenapi.Api.Responses.Error"]
 
-      assert response_module =~ "defmodule AshOpenapi.Api.Responses.Error do"
+      assert response_module =~ "use Ash.Resource"
+      assert response_module =~ "data_layer: :embedded"
       assert response_module =~ "attribute :code, :integer, allow_nil?: false, public?: true"
     end
 

@@ -172,28 +172,23 @@ defmodule AshOpenApi.ResourceConverter do
   defp generate_resource_module(
          name,
          %Schema{properties: props, required: required} = schema,
-         component_type
+         _component_type
        ) do
     required = required || []
 
     attributes = extract_attributes(schema, props, required)
     Debug.log("Generated attributes: #{inspect(attributes)}", verbose: true)
 
-    namespace = Context.namespace()
-    app_name = Context.app_name()
-
     if Enum.empty?(attributes) do
       Debug.log("Warning: No attributes generated for #{name}", verbose: true)
     end
 
     """
-    defmodule #{app_name}.#{namespace}.#{Macro.camelize(component_type)}.#{name} do
-      use Ash.Resource,
-        data_layer: :embedded
+    use Ash.Resource,
+      data_layer: :embedded
 
-      attributes do
-    #{indent_lines(attributes, 4)}
-      end
+    attributes do
+    #{indent_lines(attributes, 2)}
     end
     """
   end

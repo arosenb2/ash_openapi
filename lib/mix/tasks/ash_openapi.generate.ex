@@ -115,12 +115,19 @@ defmodule Mix.Tasks.AshOpenapi.Generate do
 
             Debug.log("Writing resource to #{file_path}", opts)
 
+            # Convert the module name to a proper format
+            formatted_module_name =
+              module_name |> String.replace(~r/[()]/, "") |> String.to_atom()
+
             Module.find_and_update_or_create_module(
               inner_igniter,
-              String.to_atom(module_name),
+              formatted_module_name,
               content,
               fn zipper ->
-                ast = Code.string_to_quoted!(content)
+                # Format the content first
+                formatted_content = content |> Code.format_string!() |> Enum.join("\n")
+                # Then convert to AST
+                ast = Code.string_to_quoted!(formatted_content)
                 {:ok, Sourceror.Zipper.replace(zipper, ast)}
               end,
               path: file_path
