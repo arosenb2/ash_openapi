@@ -53,8 +53,14 @@ defmodule AshOpenApi.TypeConverter do
         schema_name
       end
 
-    # Build the full module name
-    "#{AshOpenApi.Context.app_name()}.#{AshOpenApi.Context.namespace()}.#{Macro.camelize(component_type)}.#{schema_name}"
+    # Build the full module name and return it as a module reference
+    module_name =
+      "#{AshOpenApi.Context.app_name()}.#{AshOpenApi.Context.namespace()}.#{Macro.camelize(component_type)}.#{Macro.camelize(schema_name)}"
+      |> String.split(".")
+      |> Enum.map(&Macro.camelize/1)
+      |> Module.concat()
+
+    module_name
   end
 
   # String format conversions

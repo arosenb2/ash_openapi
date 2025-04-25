@@ -8,6 +8,19 @@ defmodule AshOpenApi.ResourceConverter do
   alias AshOpenApi.{TypeConverter, Context}
 
   @supported_component_types ~w(schemas responses headers parameters)
+  @known_ash_types [
+    :string,
+    :integer,
+    :boolean,
+    :float,
+    :decimal,
+    :date,
+    :time,
+    :utc_datetime,
+    :naive_datetime,
+    :uuid,
+    :ci_string
+  ]
 
   @doc """
   Converts OpenAPI schemas into Ash Resource modules.
@@ -182,6 +195,10 @@ defmodule AshOpenApi.ResourceConverter do
     end
 
     """
+    @moduledoc \"\"\"
+    #{name}
+    #{schema.description || ""}
+    \"\"\"
     use Ash.Resource,
       data_layer: :embedded
 
@@ -203,21 +220,42 @@ defmodule AshOpenApi.ResourceConverter do
     |> Enum.reject(&is_nil/1)
   end
 
-  defp generate_attribute(name, %Schema{type: :array, items: items}, required) do
-    type = TypeConverter.to_ash_type(items)
-    allow_nil = if required, do: ", allow_nil?: false", else: ""
-
-    """
-    attribute #{inspect(name)}, {:array, #{type}}, public?: true#{allow_nil}
-    """
-  end
-
   defp generate_attribute(name, %Reference{} = ref, required) do
     type = TypeConverter.to_ash_type(ref)
     allow_nil = if required, do: ", allow_nil?: false", else: ""
 
+    # Convert the module reference to a string without the Elixir prefix
+    type_str = type |> Module.split() |> Enum.join(".")
+
     """
-    attribute #{inspect(name)}, #{type}, public?: true#{allow_nil}
+    attribute #{inspect(name)}, #{type_str}, public?: true#{allow_nil}
+    """
+  end
+
+  defp generate_attribute(name, %Schema{type: :array, items: items}, required) do
+    type = TypeConverter.to_ash_type(items)
+    allow_nil = if required, do: ", allow_nil?: false", else: ""
+
+    type_str =
+      case type do
+        type when type in @known_ash_types ->
+          ":#{type}"
+
+        {:array, inner_type} ->
+          "{:array, #{inner_type}}"
+
+        type when is_atom(type) ->
+          if to_string(type) |> String.starts_with?("Elixir.") do
+            # For full module names, just use the module path
+            type |> Module.split() |> Enum.join(".")
+          else
+            # For simple atoms, add the colon prefix
+            ":#{type}"
+          end
+      end
+
+    """
+    attribute #{inspect(name)}, {:array, #{type_str}}, public?: true#{allow_nil}
     """
   end
 

@@ -412,5 +412,45 @@ defmodule AshOpenApi.ResourceConverterTest do
 
       api_error_module = result["AshOpenapi.Api.Schemas.ApiError"]
     end
+
+    test "handles array of references in schema attributes" do
+      platform_schema = %Schema{
+        type: :object,
+        properties: %{
+          id: %Schema{type: :string},
+          number: %Schema{type: :integer}
+        }
+      }
+
+      station_schema = %Schema{
+        type: :object,
+        description: "A train station",
+        properties: %{
+          name: %Schema{type: :string},
+          platforms: %Schema{
+            type: :array,
+            description: "The platforms at this station",
+            items: %Reference{"$ref": "#/components/schemas/Platform"}
+          }
+        }
+      }
+
+      schemas = %{
+        "Platform" => platform_schema,
+        "Station" => station_schema
+      }
+
+      result = AshOpenApi.ResourceConverter.to_ash_resources(schemas, "TrainApi", "schemas")
+
+      # The module should be generated
+      assert Map.has_key?(result, "AshOpenapi.TrainApi.Schemas.Station")
+      station_module = result["AshOpenapi.TrainApi.Schemas.Station"]
+
+      # Check the content
+      assert station_module =~
+               "attribute :platforms, {:array, AshOpenapi.TrainApi.Schemas.Platform}, public?: true"
+
+      assert station_module =~ "attribute :name, :string, public?: true"
+    end
   end
 end
