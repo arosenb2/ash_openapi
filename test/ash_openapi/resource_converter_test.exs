@@ -138,7 +138,7 @@ defmodule AshOpenApi.ResourceConverterTest do
 
       assert comment_module =~ "attribute :content, :string, allow_nil?: false, public?: true"
       assert comment_module =~ "attribute :author, :string, allow_nil?: false, public?: true"
-      assert comment_module =~ "attribute :id, :uuid, public?: true"
+      assert comment_module =~ "attribute :id, :uuid, allow_nil?: true, public?: true"
     end
 
     test "includes all constraints" do
@@ -450,7 +450,205 @@ defmodule AshOpenApi.ResourceConverterTest do
       assert station_module =~
                "attribute :platforms, {:array, AshOpenapi.TrainApi.Schemas.Platform}, public?: true"
 
-      assert station_module =~ "attribute :name, :string, public?: true"
+      assert station_module =~ "attribute :name, :string, allow_nil?: true, public?: true"
+    end
+  end
+
+  describe "generate_module/3" do
+    test "correctly merges allOf schemas" do
+      # Define the base addressFields schema
+      address_fields = %OpenApiSpex.Schema{
+        title: "Address Fields",
+        description: "Properties of a simple address, used to compose other addresses.",
+        type: :object,
+        properties: %{
+          "address1" => %OpenApiSpex.Schema{
+            type: :string,
+            description: "The first line of the postal address.",
+            maxLength: 35,
+            format: :text
+          },
+          "address2" => %OpenApiSpex.Schema{
+            type: :string,
+            description: "The second line of the street address.",
+            maxLength: 35,
+            format: :text
+          },
+          "locality" => %OpenApiSpex.Schema{
+            type: :string,
+            description: "The city/town/municipality of the address.",
+            maxLength: 30,
+            format: :text
+          },
+          "countryCode" => %OpenApiSpex.Reference{"$ref": "#/components/schemas/countryCode"}
+        }
+      }
+
+      # Define the additional properties schema
+      additional_fields = %OpenApiSpex.Schema{
+        type: :object,
+        properties: %{
+          "regionName" => %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 2,
+            maxLength: 20,
+            format: :text,
+            description: "The state, district, or outlying area of the postal address."
+          },
+          "regionCode" => %OpenApiSpex.Schema{
+            type: :string,
+            maxLength: 2,
+            minLength: 2,
+            pattern: "^[A-Za-z]{2}$",
+            description: "The state, district, or outlying area of the postal address."
+          },
+          "postalCode" => %OpenApiSpex.Reference{"$ref": "#/components/schemas/postalCode"}
+        }
+      }
+
+      # Define the full schema with allOf
+      full_address_fields = %OpenApiSpex.Schema{
+        title: "Full Address Fields",
+        description:
+          "A postal address that can hold a US address or an international (non-US) postal addresses.",
+        type: :object,
+        allOf: [
+          %OpenApiSpex.Reference{"$ref": "#/components/schemas/addressFields"},
+          additional_fields
+        ]
+      }
+
+      # Set up the context with all required schemas
+      schemas = %{
+        "schemas/addressFields" => address_fields,
+        "schemas/fullAddressFields" => full_address_fields,
+        "schemas/countryCode" => %OpenApiSpex.Schema{
+          type: :string,
+          minLength: 2,
+          maxLength: 2,
+          pattern: "^[A-Za-z]{2}$"
+        },
+        "schemas/postalCode" => %OpenApiSpex.Schema{
+          type: :string,
+          minLength: 2,
+          maxLength: 20,
+          pattern: "[0-9A-Za-z][- 0-9A-Za-z]{0,18}[0-9A-Za-z]"
+        }
+      }
+
+      AshOpenApi.Context.setup(schemas, "Test.Institutions")
+
+      # Generate the module content
+      module_content =
+        AshOpenApi.ResourceConverter.generate_module(
+          "fullAddressFields",
+          full_address_fields,
+          "schemas"
+        )
+
+      # Test for specific attributes from the base schema
+      assert module_content =~ ~r/attribute :address1.*max_length: 35/s
+      assert module_content =~ ~r/attribute :address2.*max_length: 35/s
+      assert module_content =~ ~r/attribute :locality.*max_length: 30/s
+      assert module_content =~ ~r/attribute "countryCode".*Schemas\.CountryCode/s
+
+      # Test for attributes from the additional schema
+      assert module_content =~ ~r/attribute :regionName.*min_length: 2.*max_length: 20/s
+      assert module_content =~ ~r/attribute :regionCode.*match: Regex\.compile!\("[^"]+"\)/s
+      assert module_content =~ ~r/attribute "postalCode".*Schemas\.PostalCode/s
+
+      # Additional specific assertions for regionCode constraints
+      assert module_content =~ ~r/attribute :regionCode.*min_length: 2/s
+      assert module_content =~ ~r/attribute :regionCode.*max_length: 2/s
+
+      # Verify the module structure
+      assert module_content =~ "@moduledoc"
+      assert module_content =~ "use Ash.Resource"
+      assert module_content =~ "attributes do"
+    end
+
+    test "generates a custom type module for string with constraints" do
+      schema = %OpenApiSpex.Schema{
+        type: :string,
+        description: "The unique identifier",
+        pattern: "^[-_:.~$a-zA-Z0-9]{6,48}$",
+        minLength: 6,
+        maxLength: 48
+      }
+
+      result = AshOpenApi.ResourceConverter.generate_module("ResourceId", schema, "schemas")
+
+      # Test structural elements rather than exact string matching
+      assert result =~ "@moduledoc"
+      assert result =~ "The unique identifier"
+      assert result =~ "use Ash.Type"
+      assert result =~ "def storage_type(_), do: :string"
+      assert result =~ "def cast_input(nil, _), do: {:ok, nil}"
+      assert result =~ "Ash.Type.String.cast_input(value, constraints)"
+      assert result =~ "Ash.Type.String.cast_stored(value, constraints)"
+      assert result =~ "Ash.Type.String.dump_to_native(value, constraints)"
+
+      # Test constraints are included with proper escaping
+      assert result =~ ~s|match: Regex.compile!(\\\"^[-_:.~$a-zA-Z0-9]{6,48}$\\\")|
+      assert result =~ "min_length: 6"
+      assert result =~ "max_length: 48"
+    end
+
+    test "generates a custom type module for string with date format" do
+      schema = %OpenApiSpex.Schema{
+        type: :string,
+        description: "A date value",
+        format: :date
+      }
+
+      result = AshOpenApi.ResourceConverter.generate_module("DateField", schema, "schemas")
+
+      assert result =~ "@moduledoc"
+      assert result =~ "A date value"
+      assert result =~ "use Ash.Type"
+      assert result =~ "def storage_type(_), do: :date"
+      assert result =~ "Ash.Type.Date.cast_input(value, constraints)"
+      assert result =~ "Ash.Type.Date.cast_stored(value, constraints)"
+      assert result =~ "Ash.Type.Date.dump_to_native(value, constraints)"
+    end
+
+    test "generates a custom type module for integer with number constraints" do
+      schema = %OpenApiSpex.Schema{
+        type: :integer,
+        description: "Age in years",
+        minimum: 0,
+        maximum: 150
+      }
+
+      result = AshOpenApi.ResourceConverter.generate_module("Age", schema, "schemas")
+
+      assert result =~ "@moduledoc"
+      assert result =~ "Age in years"
+      assert result =~ "use Ash.Type"
+      assert result =~ "def storage_type(_), do: :integer"
+      assert result =~ "Ash.Type.Integer.cast_input(value, constraints)"
+      assert result =~ "Ash.Type.Integer.cast_stored(value, constraints)"
+      assert result =~ "Ash.Type.Integer.dump_to_native(value, constraints)"
+
+      # Test constraints are included
+      assert result =~ "min: 0"
+      assert result =~ "max: 150"
+    end
+
+    test "handles string with enum values" do
+      schema = %OpenApiSpex.Schema{
+        type: :string,
+        description: "Status of the order",
+        enum: ["pending", "processing", "completed", "cancelled"]
+      }
+
+      result = AshOpenApi.ResourceConverter.generate_module("OrderStatus", schema, "schemas")
+
+      assert result =~ "@moduledoc"
+      assert result =~ "Status of the order"
+      assert result =~ "use Ash.Type.Enum"
+      assert result =~ "values: [:pending, :processing, :completed, :cancelled]"
+      assert result =~ "def match(value) when is_binary(value), do: {:ok, String.to_atom(value)}"
     end
   end
 end

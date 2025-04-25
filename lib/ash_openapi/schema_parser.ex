@@ -34,9 +34,14 @@ defmodule AshOpenApi.SchemaParser do
     # Store all schemas from the components section
     schemas = get_in(spec, [Access.key(:components), Access.key(:schemas)]) || %{}
 
-    for {name, schema} <- schemas do
-      AshOpenApi.Context.put_schema(name, schema)
-    end
+    # Convert schemas to a map with prefixed keys and store them
+    schemas_map =
+      Map.new(schemas, fn {name, schema} ->
+        {"schemas/#{name}", schema}
+      end)
+
+    # Store the map of schemas in the context
+    Context.setup(schemas_map, nil)
 
     {:ok, spec}
   end

@@ -22,15 +22,14 @@ defmodule AshOpenApi.SchemaConverter do
   Converts a single OpenAPI schema into an OpenApiSpex.Schema struct.
   """
   def convert_schema(schema) when is_map(schema) do
-    # Convert the schema map to an OpenApiSpex.Schema struct
-    # This is a basic implementation - you'll need to handle all schema types
     %Schema{
       type: schema["type"],
       title: schema["title"],
       description: schema["description"],
       properties: convert_properties(schema["properties"] || %{}),
       required: schema["required"] || [],
-      example: schema["example"]
+      example: schema["example"],
+      allOf: schema["allOf"]
     }
   end
 

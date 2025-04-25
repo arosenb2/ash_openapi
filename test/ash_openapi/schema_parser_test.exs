@@ -27,7 +27,7 @@ defmodule AshOpenApi.SchemaParserTest do
       refute Enum.empty?(all_schemas)
 
       # Verify some expected schemas exist and are valid OpenApiSpex.Schema structs
-      station_schema = Context.get_schema("Station")
+      station_schema = Context.get_schema("schemas/Station")
       assert %OpenApiSpex.Schema{} = station_schema
       assert station_schema.type == :object
       assert Map.has_key?(station_schema.properties, :name)
@@ -90,7 +90,7 @@ defmodule AshOpenApi.SchemaParserTest do
       assert %OpenApiSpex.OpenApi{} = spec
 
       # Verify we can retrieve schemas through the main API
-      assert %OpenApiSpex.Schema{} = AshOpenApi.get_schema("Station")
+      assert %OpenApiSpex.Schema{} = AshOpenApi.get_schema("schemas/Station")
       refute Enum.empty?(AshOpenApi.get_all_schemas())
     end
   end

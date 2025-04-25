@@ -5,7 +5,7 @@ defmodule AshOpenApi.ResourceConverter do
 
   alias AshOpenApi.Debug
   alias OpenApiSpex.{Reference, Schema}
-  alias AshOpenApi.{TypeConverter, Context}
+  alias AshOpenApi.{TypeConverter, Context, SchemaConverter}
 
   @supported_component_types ~w(schemas responses headers parameters)
   @known_ash_types [
@@ -35,6 +35,10 @@ defmodule AshOpenApi.ResourceConverter do
         "MyApp.Api.Schemas.Post" => "defmodule MyApp.Api.Schemas.Post do\\n..."
       }
   """
+  def to_ash_resources(nil, _namespace, _component_type) do
+    %{}
+  end
+
   def to_ash_resources(schemas, namespace, "headers" = component_type) do
     Context.setup(schemas, namespace)
 
@@ -61,7 +65,9 @@ defmodule AshOpenApi.ResourceConverter do
 
   def to_ash_resources(schemas, namespace, component_type)
       when component_type in @supported_component_types do
-    Context.setup(schemas, namespace)
+    # Convert the list of tuples to a map before setting up the context
+    schemas_map = Map.new(schemas)
+    Context.setup(schemas_map, namespace)
 
     result =
       schemas
@@ -86,7 +92,9 @@ defmodule AshOpenApi.ResourceConverter do
   end
 
   def to_ash_resources(schemas, namespace, "parameters" = component_type) do
-    Context.setup(schemas, namespace)
+    # Convert the list of tuples to a map before setting up the context
+    schemas_map = Map.new(schemas)
+    Context.setup(schemas_map, namespace)
 
     result =
       schemas
@@ -116,12 +124,12 @@ defmodule AshOpenApi.ResourceConverter do
     %{}
   end
 
-  defp generate_module(_name, nil, _component_type) do
+  def generate_module(_name, nil, _component_type) do
     nil
   end
 
-  defp generate_module(name, %Schema{type: :string, enum: values} = schema, _component_type)
-       when not is_nil(values) do
+  def generate_module(name, %Schema{type: :string, enum: values} = schema, _component_type)
+      when not is_nil(values) do
     # Convert string values to atoms
     atom_values = Enum.map(values, &String.to_atom/1)
 
@@ -137,15 +145,182 @@ defmodule AshOpenApi.ResourceConverter do
     """
   end
 
-  defp generate_module(name, %Schema{} = schema, component_type) do
+  def generate_module(name, %Schema{allOf: schemas} = base_schema, component_type)
+      when is_list(schemas) do
+    # Drop the allOf field from the base schema but keep other fields
+    base_schema = Map.drop(base_schema, [:allOf])
+
+    # Convert each schema in allOf, preserving references
+    merged_schema =
+      schemas
+      |> Enum.reduce(base_schema, fn
+        %Reference{} = ref, acc_schema ->
+          # For references in allOf, we want to merge their non-reference properties
+          # but preserve any property references
+          case resolve_reference(ref) do
+            nil ->
+              acc_schema
+
+            referenced_schema ->
+              # Merge properties, preserving references
+              merged_properties =
+                Map.merge(
+                  acc_schema.properties || %{},
+                  referenced_schema.properties || %{},
+                  fn _k, v1, v2 ->
+                    case {v1, v2} do
+                      {%Reference{}, _} -> v1
+                      {_, %Reference{}} -> v2
+                      _ -> v2
+                    end
+                  end
+                )
+
+              %Schema{
+                acc_schema
+                | properties: merged_properties,
+                  required:
+                    Enum.uniq((acc_schema.required || []) ++ (referenced_schema.required || [])),
+                  type: referenced_schema.type || acc_schema.type,
+                  description: referenced_schema.description || acc_schema.description
+              }
+          end
+
+        %Schema{} = schema, acc_schema ->
+          # For direct schemas, merge properties preserving references
+          merged_properties =
+            Map.merge(
+              acc_schema.properties || %{},
+              schema.properties || %{},
+              fn _k, v1, v2 ->
+                case {v1, v2} do
+                  {%Reference{}, _} -> v1
+                  {_, %Reference{}} -> v2
+                  _ -> v2
+                end
+              end
+            )
+
+          %Schema{
+            acc_schema
+            | properties: merged_properties,
+              required: Enum.uniq((acc_schema.required || []) ++ (schema.required || [])),
+              type: schema.type || acc_schema.type,
+              description: schema.description || acc_schema.description
+          }
+
+        schema, acc_schema when is_map(schema) ->
+          # For raw maps, convert to Schema first then merge
+          schema_struct = %Schema{
+            type: schema["type"] && String.to_atom(schema["type"]),
+            properties: schema["properties"],
+            required: schema["required"] || [],
+            description: schema["description"]
+          }
+
+          merged_properties =
+            Map.merge(
+              acc_schema.properties || %{},
+              schema_struct.properties || %{},
+              fn _k, v1, v2 ->
+                case {v1, v2} do
+                  {%Reference{}, _} -> v1
+                  {_, %Reference{}} -> v2
+                  _ -> v2
+                end
+              end
+            )
+
+          %Schema{
+            acc_schema
+            | properties: merged_properties,
+              required: Enum.uniq((acc_schema.required || []) ++ (schema_struct.required || [])),
+              type: schema_struct.type || acc_schema.type,
+              description: schema_struct.description || acc_schema.description
+          }
+      end)
+
+    # Now generate the module with the merged schema
+    generate_module(name, merged_schema, component_type)
+  end
+
+  def generate_module(name, %Schema{type: type} = schema, _component_type)
+      when type in @known_ash_types do
+    # For scalar types, create a custom type module instead of a resource
+    description = if schema.description, do: schema.description, else: name
+    storage_type = determine_storage_type(schema)
+
+    """
+    @moduledoc \"\"\"
+    #{name}
+    #{description}
+    \"\"\"
+    use Ash.Type
+
+    @impl true
+    def storage_type(_), do: #{inspect(storage_type)}
+
+    @impl true
+    def cast_input(nil, _), do: {:ok, nil}
+    def cast_input(value, constraints) do
+      #{generate_cast_input(storage_type)}
+    end
+
+    @impl true
+    def cast_stored(nil, _), do: {:ok, nil}
+    def cast_stored(value, constraints) do
+      #{generate_cast_stored(storage_type)}
+    end
+
+    @impl true
+    def dump_to_native(nil, _), do: {:ok, nil}
+    def dump_to_native(value, constraints) do
+      #{generate_dump_to_native(storage_type)}
+    end
+
+    @impl true
+    def constraints do
+      #{inspect(build_constraints(schema), pretty: true)}
+    end
+    """
+  end
+
+  def generate_module(name, %Schema{allOf: allOf} = schema, component_type) when is_list(allOf) do
+    base_schema = Map.drop(schema, [:allOf, "allOf"])
+    merged_schema = merge_all_of_schemas(allOf, base_schema)
+    generate_module(name, merged_schema, component_type)
+  end
+
+  def generate_module(name, %Schema{type: :object} = schema, component_type) do
     generate_resource_module(name, schema, component_type)
   end
 
-  defp generate_module(
-         name,
-         %{"type" => "object", "properties" => props} = raw_schema,
-         component_type
-       ) do
+  def generate_module(name, %Schema{} = schema, _component_type) do
+    description = if schema.description, do: schema.description, else: name
+    type = TypeConverter.to_ash_type(schema)
+
+    """
+    @moduledoc \"\"\"
+    #{name}
+    #{description}
+    \"\"\"
+    use Ash.Type
+
+    @impl true
+    def storage_type, do: #{inspect(type)}
+
+    @impl true
+    def constraints do
+      #{inspect(build_constraints(schema), pretty: true)}
+    end
+    """
+  end
+
+  def generate_module(
+        name,
+        %{"type" => "object", "properties" => props} = raw_schema,
+        component_type
+      ) do
     # Convert the raw properties to Schema structs
     properties =
       Map.new(props, fn {key, value} ->
@@ -175,7 +350,7 @@ defmodule AshOpenApi.ResourceConverter do
     generate_resource_module(name, schema, component_type)
   end
 
-  defp generate_module(_name, %Reference{}, _component_type) do
+  def generate_module(_name, %Reference{}, _component_type) do
     # For references, we don't need to generate a new resource
     nil
   end
@@ -221,20 +396,39 @@ defmodule AshOpenApi.ResourceConverter do
   end
 
   defp generate_attribute(name, %Reference{} = ref, required) do
-    type = TypeConverter.to_ash_type(ref)
-    allow_nil = if required, do: ", allow_nil?: false", else: ""
+    [_, "components", component_type, schema_name] = String.split(ref."$ref", "/")
 
-    # Convert the module reference to a string without the Elixir prefix
-    type_str = type |> Module.split() |> Enum.join(".")
+    if component_type == "schemas" do
+      module_name =
+        "#{Context.app_name()}.#{Context.namespace()}.Schemas.#{Macro.camelize(schema_name)}"
 
-    """
-    attribute #{inspect(name)}, #{type_str}, public?: true#{allow_nil}
-    """
+      allow_nil = get_allow_nil(required, false)
+
+      """
+      attribute #{inspect(name)}, #{module_name}, public?: true#{allow_nil}
+      """
+    else
+      case resolve_reference(ref) do
+        nil ->
+          type = TypeConverter.to_ash_type(ref)
+          allow_nil = get_allow_nil(required, false)
+          type_str = type |> Module.split() |> Enum.join(".")
+
+          """
+          attribute #{inspect(name)}, #{type_str}, public?: true#{allow_nil}
+          """
+
+        referenced_schema ->
+          generate_attribute(name, referenced_schema, required)
+      end
+    end
   end
 
-  defp generate_attribute(name, %Schema{type: :array, items: items}, required) do
+  defp generate_attribute(name, %Schema{type: :array, items: items} = schema, required) do
     type = TypeConverter.to_ash_type(items)
-    allow_nil = if required, do: ", allow_nil?: false", else: ""
+    # For arrays, check if type includes "null" for nullable
+    nullable = is_list(schema.type) && Enum.member?(schema.type, :null)
+    allow_nil = get_allow_nil(required, nullable)
 
     type_str =
       case type do
@@ -254,8 +448,15 @@ defmodule AshOpenApi.ResourceConverter do
           end
       end
 
+    constraints = array_constraints(schema)
+
+    constraints_str =
+      if constraints != [],
+        do: ", constraints: [\n      #{Enum.join(constraints, ",\n      ")}\n    ]",
+        else: ""
+
     """
-    attribute #{inspect(name)}, {:array, #{type_str}}, public?: true#{allow_nil}
+    attribute #{inspect(name)}, {:array, #{type_str}}, public?: true#{allow_nil}#{constraints_str}
     """
   end
 
@@ -267,12 +468,9 @@ defmodule AshOpenApi.ResourceConverter do
 
     default = if schema.default, do: ", default: #{inspect(schema.default)}", else: ""
 
-    allow_nil =
-      cond do
-        required -> ", allow_nil?: false"
-        schema.nullable -> ", allow_nil?: true"
-        true -> ""
-      end
+    # Check if type includes "null" for nullable
+    nullable = is_list(schema.type) && Enum.member?(schema.type, :null)
+    allow_nil = get_allow_nil(required, nullable)
 
     constraints = build_constraints(schema)
 
@@ -281,7 +479,6 @@ defmodule AshOpenApi.ResourceConverter do
         do: ", constraints: [\n      #{Enum.join(constraints, ",\n      ")}\n    ]",
         else: ""
 
-    # Convert string name to atom
     attribute_name = if is_binary(name), do: String.to_atom(name), else: name
 
     """
@@ -298,7 +495,7 @@ defmodule AshOpenApi.ResourceConverter do
     # Drop the allOf field from the base schema but keep other fields
     base_schema = Map.drop(base_schema, [:allOf])
 
-    # Convert each schema in allOf, resolving references if needed
+    # Convert each schema in allOf, preserving references
     merged_schema =
       schemas
       |> Enum.reduce({base_schema, base_required || []}, fn
@@ -591,9 +788,135 @@ defmodule AshOpenApi.ResourceConverter do
     schemas = Context.get_all_schemas()
     key = "parameters/#{param_name}"
 
-    case List.keyfind(schemas, key, 0) do
-      {^key, %Reference{}} -> true
+    case Map.get(schemas, key) do
+      %OpenApiSpex.Reference{} -> true
       _ -> false
     end
+  end
+
+  defp array_constraints(%Schema{type: :array} = schema) do
+    [
+      min_items_constraint(schema),
+      max_items_constraint(schema),
+      unique_items_constraint(schema)
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp min_items_constraint(%Schema{minItems: nil}), do: nil
+  defp min_items_constraint(%Schema{minItems: min}), do: "min_length: #{min}"
+
+  defp max_items_constraint(%Schema{maxItems: nil}), do: nil
+  defp max_items_constraint(%Schema{maxItems: max}), do: "max_length: #{max}"
+
+  defp unique_items_constraint(%Schema{uniqueItems: true}), do: "unique?: true"
+  defp unique_items_constraint(_), do: nil
+
+  defp get_allow_nil(true, false), do: ", allow_nil?: false"
+  defp get_allow_nil(_required, _nullable), do: ", allow_nil?: true"
+
+  defp determine_storage_type(%Schema{type: :string, format: format}) when not is_nil(format) do
+    case format do
+      :date -> :date
+      :date_time -> :utc_datetime
+      :email -> :string
+      :uuid -> :uuid
+      :uri -> :string
+      :binary -> :binary
+      _ -> :string
+    end
+  end
+
+  defp determine_storage_type(%Schema{type: type}) when type in @known_ash_types, do: type
+
+  defp generate_cast_input(storage_type) do
+    case storage_type do
+      :string -> "Ash.Type.String.cast_input(value, constraints)"
+      :integer -> "Ash.Type.Integer.cast_input(value, constraints)"
+      :boolean -> "Ash.Type.Boolean.cast_input(value, constraints)"
+      :float -> "Ash.Type.Float.cast_input(value, constraints)"
+      :decimal -> "Ash.Type.Decimal.cast_input(value, constraints)"
+      :date -> "Ash.Type.Date.cast_input(value, constraints)"
+      :time -> "Ash.Type.Time.cast_input(value, constraints)"
+      :utc_datetime -> "Ash.Type.UtcDatetime.cast_input(value, constraints)"
+      :naive_datetime -> "Ash.Type.NaiveDatetime.cast_input(value, constraints)"
+      :uuid -> "Ash.Type.UUID.cast_input(value, constraints)"
+      :ci_string -> "Ash.Type.CiString.cast_input(value, constraints)"
+      _ -> "Ash.Type.String.cast_input(value, constraints)"
+    end
+  end
+
+  defp generate_cast_stored(storage_type) do
+    case storage_type do
+      :string -> "Ash.Type.String.cast_stored(value, constraints)"
+      :integer -> "Ash.Type.Integer.cast_stored(value, constraints)"
+      :boolean -> "Ash.Type.Boolean.cast_stored(value, constraints)"
+      :float -> "Ash.Type.Float.cast_stored(value, constraints)"
+      :decimal -> "Ash.Type.Decimal.cast_stored(value, constraints)"
+      :date -> "Ash.Type.Date.cast_stored(value, constraints)"
+      :time -> "Ash.Type.Time.cast_stored(value, constraints)"
+      :utc_datetime -> "Ash.Type.UtcDatetime.cast_stored(value, constraints)"
+      :naive_datetime -> "Ash.Type.NaiveDatetime.cast_stored(value, constraints)"
+      :uuid -> "Ash.Type.UUID.cast_stored(value, constraints)"
+      :ci_string -> "Ash.Type.CiString.cast_stored(value, constraints)"
+      _ -> "Ash.Type.String.cast_stored(value, constraints)"
+    end
+  end
+
+  defp generate_dump_to_native(storage_type) do
+    case storage_type do
+      :string -> "Ash.Type.String.dump_to_native(value, constraints)"
+      :integer -> "Ash.Type.Integer.dump_to_native(value, constraints)"
+      :boolean -> "Ash.Type.Boolean.dump_to_native(value, constraints)"
+      :float -> "Ash.Type.Float.dump_to_native(value, constraints)"
+      :decimal -> "Ash.Type.Decimal.dump_to_native(value, constraints)"
+      :date -> "Ash.Type.Date.dump_to_native(value, constraints)"
+      :time -> "Ash.Type.Time.dump_to_native(value, constraints)"
+      :utc_datetime -> "Ash.Type.UtcDatetime.dump_to_native(value, constraints)"
+      :naive_datetime -> "Ash.Type.NaiveDatetime.dump_to_native(value, constraints)"
+      :uuid -> "Ash.Type.UUID.dump_to_native(value, constraints)"
+      :ci_string -> "Ash.Type.CiString.dump_to_native(value, constraints)"
+      _ -> "Ash.Type.String.dump_to_native(value, constraints)"
+    end
+  end
+
+  defp merge_all_of_schemas(schemas, base_schema) do
+    Enum.reduce(schemas, base_schema, fn
+      %Reference{} = ref, acc_schema ->
+        case resolve_reference(ref) do
+          nil -> acc_schema
+          referenced_schema -> merge_schemas(acc_schema, referenced_schema)
+        end
+
+      %Schema{} = schema, acc_schema ->
+        merge_schemas(acc_schema, schema)
+
+      schema, acc_schema when is_map(schema) ->
+        schema_struct = SchemaConverter.convert_schema(schema)
+        merge_schemas(acc_schema, schema_struct)
+    end)
+  end
+
+  defp merge_schemas(schema1, schema2) do
+    merged_properties =
+      Map.merge(
+        schema1.properties || %{},
+        schema2.properties || %{},
+        fn _k, v1, v2 ->
+          case {v1, v2} do
+            {%Reference{}, _} -> v1
+            {_, %Reference{}} -> v2
+            _ -> v2
+          end
+        end
+      )
+
+    %Schema{
+      schema1
+      | properties: merged_properties,
+        required: Enum.uniq((schema1.required || []) ++ (schema2.required || [])),
+        type: schema2.type || schema1.type,
+        description: schema2.description || schema1.description
+    }
   end
 end

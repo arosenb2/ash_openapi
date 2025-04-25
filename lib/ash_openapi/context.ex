@@ -89,14 +89,16 @@ defmodule AshOpenApi.Context do
   end
 
   @doc """
-  Gets a specific schema by name.
+  Gets a specific schema by name. Name should include the component type prefix (e.g., "schemas/User").
   """
   def get_schema(name) do
-    Agent.get(__MODULE__, &get_in(&1, [:schemas, name]))
+    Agent.get(__MODULE__, fn state ->
+      Map.get(state.schemas, name)
+    end)
   end
 
   @doc """
-  Puts a schema into the context.
+  Puts a schema into the context. Name should include the component type prefix (e.g., "schemas/User").
   """
   def put_schema(name, schema) do
     Agent.update(__MODULE__, fn %{schemas: schemas} = state ->
